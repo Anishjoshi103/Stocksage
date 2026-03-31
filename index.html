@@ -1511,6 +1511,8 @@ async function analyzeStock() {
 
   currentTicker    = input;
   _mcHorizonDays   = 30;
+  // Destroy MC chart so auto-run fires on next MC tab visit
+  if (mcChart) { mcChart.destroy(); mcChart = null; }
 
   // Show UI shell
   const welcome = document.getElementById('welcome-screen');
@@ -1558,8 +1560,9 @@ async function analyzeStock() {
   if (closes.length >= 30) {
     mc = runMonteCarloEngine(closes, raw.price, 5000, 30);
     if (mc) mc.ticker = input;
+    console.debug('[SS] MC computed:', mc ? 'OK paths='+mc.paths : 'FAILED');
   } else {
-    console.debug(`[SS] MC skipped: only ${closes.length} candles`);
+    console.debug('[SS] MC skipped: only ' + closes.length + ' candles');
   }
 
   // ── Convert Yahoo decimal ratios → % ──────────────────────────────────────
@@ -1702,7 +1705,7 @@ One paragraph: what this stock is, current market position, and immediate take.
 3 sentences: valuation (cheap/fair/expensive vs growth rate), profitability quality, balance sheet health.
 
 **5. TRADE BIAS**
-2-3 sentences: Bullish/Neutral/Bearish directional stance, short-term (1-4 weeks) vs medium-term (1-3 months), key invalidation level.`;
+3 sentences: state Bullish/Neutral/Bearish clearly in first word. Short-term (1-4 weeks) entry/exit logic. Key price level that invalidates thesis.`;
 
   const PROMPT_NEWS = `Financial analyst. Stock: ${input} (${raw.companyName||input}), ${raw.sector||''}, ${detExch}.
 Reply ONLY as key: value lines:
@@ -1719,7 +1722,7 @@ founded: [year or Unknown]`;
   setEl('ai-overview-section', loadingCard('🤖 Running Bloomberg AI analysis...'));
 
   Promise.allSettled([
-    callClaude(PROMPT_ANALYSIS, 800),
+    callClaude(PROMPT_ANALYSIS, 1000),
     callClaude(PROMPT_NEWS,     300),
   ]).then(([aRes, nRes]) => {
     // Bloomberg AI panel
@@ -1934,9 +1937,10 @@ function runMonteCarloEngine(closes, currentPrice, numPaths=5000, days=30) {
   const S0=currentPrice;
   const finals=new Float64Array(numPaths);
   const samplePaths=[];
+  // First 50 paths stored fully for chart rendering
   for (let p=0; p<numPaths; p++) {
     let pr=S0;
-    const store=p<10;
+    const store=p<50;
     const path=store?[parseFloat(S0.toFixed(2))]:null;
     for (let d=0; d<days; d++) { pr*=Math.exp(drift+sigma*rn()); if(store) path.push(parseFloat(pr.toFixed(2))); }
     finals[p]=pr;
@@ -2023,11 +2027,16 @@ async function runMonteCarlo() {
     if (mcChart) { mcChart.destroy(); mcChart=null; }
     const labels = Array.from({length:days+1}, (_,i) => i===0?'Now':'D'+i);
     const ds = [];
+    // Fan chart — first 30 faded paths, remaining 20 slightly visible
     (mc.samplePaths||[]).forEach((path,pi) => {
-      ds.push({ data:path, borderColor:`rgba(0,212,255,${0.06+pi*0.005})`, borderWidth:1, fill:false, pointRadius:0, tension:0.25 });
+      const opacity = pi < 30 ? 0.08 : 0.15;
+      const color   = pi % 3 === 0 ? `rgba(0,212,255,${opacity})` : pi % 3 === 1 ? `rgba(0,229,160,${opacity})` : `rgba(168,85,247,${opacity})`;
+      ds.push({ data:path, borderColor:color, borderWidth:pi<30?0.8:1.2, fill:false, pointRadius:0, tension:0.2 });
     });
+    // Median highlight
     if (mc.samplePaths?.length >= 5) {
-      ds.push({ label:'Median', data:mc.samplePaths[Math.floor(mc.samplePaths.length/2)], borderColor:'#00d4ff', borderWidth:2.5, fill:false, pointRadius:0, tension:0.25 });
+      const midPath = mc.samplePaths[Math.floor(mc.samplePaths.length/2)];
+      ds.push({ label:'Median', data:midPath, borderColor:'#00d4ff', borderWidth:2.5, fill:false, pointRadius:0, tension:0.2, z:10 });
     }
     ds.push({ label:'Bear', data:Array(days+1).fill(mc.bear), borderColor:'rgba(255,71,87,0.6)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
     ds.push({ label:'Bull', data:Array(days+1).fill(mc.bull), borderColor:'rgba(0,229,160,0.6)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
@@ -2274,18 +2283,17 @@ function renderFundamentals() {
   const d = currentData;
   if (!d) return;
   const sym = d.currencySymbol || '₹';
-  const fS  = (v,dec=2) => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(dec):'Data unavailable';
-  const fP  = (v,dec=2) => (v!=null&&!isNaN(v))?parseFloat(v).toFixed(dec)+'%':'Data unavailable';
-  const fCv = v => (v!=null&&v!==''&&v!=='–'&&v!=='N/A'&&v!=='undefined')?v:'Data unavailable';
+  const fS  = (v,dec=2) => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(dec):'—';
+  const fP  = (v,dec=2) => (v!=null&&!isNaN(v))?parseFloat(v).toFixed(dec)+'%':'—';
+  const fCv = v => (v!=null&&v!==''&&v!=='–'&&v!=='N/A'&&v!=='undefined'&&v!=='Data unavailable')?v:'—';
   const clr = (v,g,b) => (v!=null&&!isNaN(v))?(v>g?'green':v<b?'red':'yellow'):'';
 
   const conf = Math.round((d.confidence||0)*100);
   const confColor = conf>=70?'var(--green)':conf>=40?'var(--yellow)':'var(--red)';
 
   setEl('fundamentals-section', `
-    <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.15);border-radius:8px;padding:9px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-      <div style="font-size:10px;color:var(--text3)">Data from Yahoo Finance quoteSummary + derived calculations</div>
-      <div style="font-size:11px;font-weight:700;color:${confColor}">DATA ${conf}%</div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <span style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:4px;color:${confColor};font-size:9px;padding:2px 8px;letter-spacing:.5px">DATA CONFIDENCE ${conf}%</span>
     </div>
 
     <div class="section-title mb-8">VALUATION</div>
@@ -3048,6 +3056,10 @@ function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('tab-'+tab)?.classList.add('active');
   document.querySelectorAll('.tab').forEach(t=>{ if((t.dataset.tab||'')===tab) t.classList.add('active'); });
+  // Auto-run MC when tab opened and data is available but chart not yet rendered
+  if (tab==='montecarlo' && currentData?._rawCloses?.length>=30 && !mcChart) {
+    setTimeout(runMonteCarlo, 100);
+  }
 }
 
 // ==================== SKELETON / UTILS ====================
