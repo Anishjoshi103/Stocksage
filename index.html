@@ -1186,25 +1186,22 @@
       </div>
     </div>
 
-    <!-- Monte Carlo Tab -->
-    <div id="tab-montecarlo" class="panel" id="mc-panel">
+        <!-- Monte Carlo Tab -->
+    <div id="tab-montecarlo" class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div class="section-title">MONTE CARLO SIMULATION</div>
         <button class="btn" onclick="runMonteCarlo()" id="mc-run-btn">▶ RUN</button>
       </div>
-      <p class="text-sm mb-8">GBM simulation using 5,000 paths · log-normal returns · Itô's lemma corrected</p>
-
-      <!-- Horizon selector -->
+      <p class="text-sm mb-8">GBM · 5,000 paths · log-normal returns · Itô corrected</p>
       <div style="display:flex;gap:6px;margin-bottom:12px">
-        <button class="period-btn mc-horizon active" data-days="30" onclick="selectMCHorizon(this,30)">30D</button>
-        <button class="period-btn mc-horizon"         data-days="60" onclick="selectMCHorizon(this,60)">60D</button>
-        <button class="period-btn mc-horizon"         data-days="90" onclick="selectMCHorizon(this,90)">90D</button>
+        <button class="period-btn mc-horizon active" onclick="selectMCHorizon(this,30)">30D</button>
+        <button class="period-btn mc-horizon"         onclick="selectMCHorizon(this,60)">60D</button>
+        <button class="period-btn mc-horizon"         onclick="selectMCHorizon(this,90)">90D</button>
       </div>
-
       <div class="chart-wrap">
         <div class="chart-header">
           <div class="chart-title" id="mc-chart-title">SIMULATION PATHS</div>
-          <div style="font-size:9px;color:var(--text3)" id="mc-chart-sub">Run simulation to see forecast paths</div>
+          <div style="font-size:9px;color:var(--text3)" id="mc-chart-sub">Run simulation to see forecast</div>
         </div>
         <canvas id="mc-chart"></canvas>
       </div>
@@ -1388,20 +1385,17 @@
 
 
 <script>
-
 // ==================== STATE ====================
-let apiKey = '';
-let aiProvider = 'anthropic';
-let geminiKey = '';
-let currentTicker = '';
-let currentData = null;
+let apiKey = '', geminiKey = '', aiProvider = 'anthropic';
+let currentTicker = '', currentData = null;
 let priceChart = null, rsiChart = null, macdChart = null, mcChart = null;
 let currency = { code: 'USD', symbol: '$' };
 let exchange = 'NSE';
+let _mcHorizonDays = 30;
+let _debounceTimer = null;
 let watchlist = JSON.parse(localStorage.getItem('ss_watchlist') || '[]');
 let alerts    = JSON.parse(localStorage.getItem('ss_alerts')    || '[]');
 let chatHistory = [];
-let _mcHorizonDays = 30;
 
 // ==================== PROVIDER ====================
 function selectProvider(p) {
@@ -1418,31 +1412,26 @@ function selectProvider(p) {
 }
 
 function settingsSwitchProvider(p) {
-  aiProvider = p;
-  localStorage.setItem('ss_provider', p);
-  const g   = p === 'gemini';
-  const at  = document.getElementById('settings-tab-anthropic');
-  const gt  = document.getElementById('settings-tab-gemini');
-  const inf = document.getElementById('settings-provider-info');
-  const dsp = document.getElementById('api-key-display');
-  if (at) { at.style.background = g ? 'transparent' : 'var(--accent)'; at.style.color = g ? 'var(--text3)' : 'var(--bg)'; }
-  if (gt) { gt.style.background = g ? 'var(--green)'  : 'transparent'; gt.style.color = g ? 'var(--bg)'    : 'var(--text3)'; }
-  if (inf) inf.innerHTML = g
-    ? '🟢 <b style="color:var(--green)">Gemini Free</b> — No credit card. <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--green)">Get key →</a><br><span style="color:var(--yellow)">⚠️ Free tier: ~15 req/min. Wait 1 min if quota hit.</span>'
-    : '🔵 <b style="color:var(--accent)">Anthropic Claude</b> — Pay per use. <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent)">Get key →</a>';
-  if (dsp) dsp.textContent = g ? (geminiKey ? geminiKey.slice(0,8)+'••••' : 'No Gemini key') : (apiKey ? apiKey.slice(0,12)+'••••' : 'No Anthropic key');
-  showToast('✅ Switched to ' + (g ? 'Gemini Free' : 'Anthropic'));
+  aiProvider = p; localStorage.setItem('ss_provider', p);
+  const g = p === 'gemini';
+  ['settings-tab-anthropic','settings-tab-gemini'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const active = (i === 0) ? !g : g;
+    el.style.background = active ? (g ? 'var(--green)' : 'var(--accent)') : 'transparent';
+    el.style.color = active ? 'var(--bg)' : 'var(--text3)';
+  });
+  showToast('✅ Switched to ' + (g ? 'Gemini' : 'Anthropic'));
 }
 
 // ==================== INIT ====================
 function initApp() {
   const g   = aiProvider === 'gemini';
-  const key = g
-    ? document.getElementById('gemini-key-input').value.trim()
-    : document.getElementById('anthropic-key-input').value.trim();
+  const el  = document.getElementById(g ? 'gemini-key-input' : 'anthropic-key-input');
+  const key = (el?.value || '').trim();
   if (!key) { showToast('❌ Enter your API key'); return; }
   if (!g && !key.startsWith('sk-ant')) { showToast('❌ Anthropic key must start with sk-ant'); return; }
-  if (g  && !key.startsWith('AIza'))   { showToast('❌ Gemini key must start with AIza'); return; }
+  if (g && !key.startsWith('AIza'))    { showToast('❌ Gemini key must start with AIza'); return; }
   if (g) { geminiKey = key; localStorage.setItem('ss_geminikey', key); }
   else   { apiKey    = key; localStorage.setItem('ss_apikey',    key); }
   localStorage.setItem('ss_provider', aiProvider);
@@ -1450,15 +1439,14 @@ function initApp() {
 }
 
 function launchApp() {
-  document.getElementById('setup-screen').style.display = 'none';
-  document.getElementById('main-app').style.display     = 'block';
-  settingsSwitchProvider(aiProvider);
-  renderWatchlist();
-  renderAlerts();
-  migrateHistory();
+  const setup = document.getElementById('setup-screen');
+  const main  = document.getElementById('main-app');
+  if (setup) setup.style.display = 'none';
+  if (main)  main.style.display  = 'block';
+  renderWatchlist(); renderAlerts();
   if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
   startAlertPolling();
-  showToast('✅ StockSage Ready · ' + (aiProvider === 'gemini' ? 'Gemini 🟢' : 'Anthropic 🔵'));
+  showToast('✅ StockSage Ready');
 }
 
 window.addEventListener('load', () => {
@@ -1468,48 +1456,48 @@ window.addEventListener('load', () => {
   aiProvider = prov;
   if (ant) apiKey    = ant;
   if (gem) geminiKey = gem;
-  const activeKey = prov === 'gemini' ? gem : ant;
-  if (activeKey) { launchApp(); }
-  else if (prov === 'gemini') { selectProvider('gemini'); }
+  if (prov === 'gemini' && gem) launchApp();
+  else if (prov === 'anthropic' && ant) launchApp();
+  else if (prov === 'gemini') selectProvider('gemini');
+  const urlEl = document.getElementById('api-url-display');
+  if (urlEl) urlEl.textContent = localStorage.getItem('ss_api_url') || 'https://stocksage-api.vercel.app';
 });
-
-function migrateHistory() {
-  let h = JSON.parse(localStorage.getItem('ss_history') || '[]');
-  localStorage.setItem('ss_history', JSON.stringify(h.slice(0, 50)));
-}
 
 // ==================== NAVIGATION ====================
 function showPage(page, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + page)?.classList.add('active');
-  btn?.classList.add('active');
+  if (btn) btn.classList.add('active');
 }
 
 function switchTab(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  const panel = document.getElementById('tab-' + tab);
-  if (panel) panel.classList.add('active');
+  document.getElementById('tab-' + tab)?.classList.add('active');
   document.querySelectorAll('.tab').forEach(t => {
-    if (t.dataset.tab === tab || t.textContent.trim().toLowerCase().startsWith(tab.slice(0,4).toLowerCase())) {
-      t.classList.add('active');
-    }
+    if ((t.dataset.tab || '') === tab) t.classList.add('active');
   });
 }
 
 function showToast(msg) {
   const t = document.getElementById('toast');
   if (!t) return;
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2800);
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
 // ==================== ANALYZE ====================
 function quickAnalyze(ticker) {
-  document.getElementById('ticker-input').value = ticker;
+  const inp = document.getElementById('ticker-input');
+  if (inp) inp.value = ticker;
   analyzeStock();
+}
+
+function debouncedAnalyze() {
+  clearTimeout(_debounceTimer);
+  _debounceTimer = setTimeout(analyzeStock, 600);
 }
 
 async function analyzeStock() {
@@ -1517,155 +1505,136 @@ async function analyzeStock() {
   if (!input) { showToast('⚠️ Enter a ticker symbol'); return; }
 
   const INDIAN_RE = /^(RELIANCE|TCS|INFY|WIPRO|HDFCBANK|ICICIBANK|SBIN|BAJFINANCE|HINDUNILVR|KOTAKBANK|LT|AXISBANK|ASIANPAINT|MARUTI|TITAN|NESTLEIND|ULTRACEMCO|SUNPHARMA|ONGC|NTPC|POWERGRID|ADANIPORTS|ADANIENT|TATAMOTORS|TATASTEEL|INOXWIND|IREDA|NHPC|SJVN|CESC|TORNTPOWER|TATAPOWER|ADANIGREEN|ITC|SUZLON|BHEL|COALINDIA|HCLTECH|TECHM|BAJAJFINSV|DIVISLAB|DRREDDY|CIPLA|EICHERMOT|HEROMOTOCO|BHARTIARTL|INDUSINDBK|APOLLOHOSP|VOLTAS|HAVELLS|SIEMENS|PIDILITIND)$/;
-  const isIndian     = exchange === 'NSE' || exchange === 'BSE' || INDIAN_RE.test(input);
+  const isIndian   = exchange === 'NSE' || exchange === 'BSE' || INDIAN_RE.test(input);
   if (isIndian) currency = { code: 'INR', symbol: '₹' };
-  const detectedExch = isIndian ? (exchange === 'BSE' ? 'BSE' : 'NSE') : exchange;
+  const detExch    = isIndian ? (exchange === 'BSE' ? 'BSE' : 'NSE') : exchange;
 
-  currentTicker = input;
-  _mcHorizonDays = 30;
+  currentTicker    = input;
+  _mcHorizonDays   = 30;
 
+  // Show UI shell
   const welcome = document.getElementById('welcome-screen');
+  const tabs    = document.getElementById('tabs-bar');
   if (welcome) welcome.style.display = 'none';
-  const tabs = document.getElementById('tabs-bar');
-  if (tabs) tabs.style.display = 'flex';
-
+  if (tabs)    tabs.style.display    = 'flex';
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('tab-overview')?.classList.add('active');
   document.querySelectorAll('.tab')[0]?.classList.add('active');
 
-  document.getElementById('stock-header-section').innerHTML = skeletonCard();
-  document.getElementById('stats-section').innerHTML        = skeletonGrid(6);
-  document.getElementById('signal-section').innerHTML       = '';
-  document.getElementById('ai-overview-section').innerHTML  = loadingCard('🤖 Running AI analysis...');
-  document.getElementById('mc-results').innerHTML           = '';
+  setEl('stock-header-section', skeletonCard());
+  setEl('stats-section',        skeletonGrid(6));
+  setEl('signal-section',       '');
+  setEl('ai-overview-section',  loadingCard('🤖 Running AI analysis...'));
+  setEl('mc-results',           '');
   showToast('🔍 Analyzing ' + input + '...');
 
   // ── Fetch from Vercel API ──────────────────────────────────────────────────
-  const VERCEL_API = (localStorage.getItem('ss_api_url') || 'https://stocksage-api.vercel.app').replace(/\/$/, '');
+  const API = (localStorage.getItem('ss_api_url') || 'https://stocksage-api.vercel.app').replace(/\/$/, '');
   let raw = null;
   try {
-    const r = await fetch(`${VERCEL_API}/api/stock?symbol=${encodeURIComponent(input)}&exchange=${detectedExch}&range=1y&interval=1d`);
+    const r = await fetch(`${API}/api/stock?symbol=${encodeURIComponent(input)}&exchange=${detExch}&range=1y&interval=1d`);
     if (!r.ok) throw new Error('API HTTP ' + r.status);
     const j = await r.json();
     if (j.error) throw new Error(j.error);
-    if (!j.price || j.price <= 0) throw new Error('No price data returned');
+    if (!j.price || j.price <= 0) throw new Error('No price returned');
     raw = j;
-    showToast('✅ ' + (raw.currencySymbol || '₹') + raw.price + ' · ' + raw.priceDate);
+    console.debug(`[SS] Fetched ${input}: $${raw.price}, confidence=${raw.confidence}, closes=${raw.closes?.length}`);
   } catch (e) {
-    document.getElementById('stock-header-section').innerHTML = errorCard(
-      'Failed to fetch ' + input + ': ' + e.message + '. Check Settings → API URL.'
-    );
-    document.getElementById('ai-overview-section').innerHTML = '';
-    showToast('❌ ' + e.message);
-    return;
+    setEl('stock-header-section', errorCard('Failed to fetch ' + input + ': ' + e.message));
+    setEl('ai-overview-section', '');
+    showToast('❌ ' + e.message); return;
   }
 
-  // ── Compute indicators from full 1Y history ────────────────────────────────
+  // ── Compute from full 1Y history ───────────────────────────────────────────
   const closes  = (raw.closes  || []).filter(v => v != null && v > 0);
   const highs   = (raw.highs   || []).filter(v => v != null && v > 0);
   const lows    = (raw.lows    || []).filter(v => v != null && v > 0);
   const volumes = (raw.volumes || []).filter(v => v != null && v >= 0);
 
   const ind  = computeIndicators(closes, highs, lows, volumes, raw.price);
-  const risk = computeRisk(closes, raw.beta, raw.price, raw.previousClose);
+  const risk = computeRisk(closes, raw.beta, raw.price);
   let mc = null;
   if (closes.length >= 30) {
     mc = runMonteCarloEngine(closes, raw.price, 5000, 30);
     if (mc) mc.ticker = input;
+  } else {
+    console.debug(`[SS] MC skipped: only ${closes.length} candles`);
   }
 
-  // ── Convert Yahoo decimal ratios → percentage ──────────────────────────────
-  const pct2 = (v, dec = 2) => (v != null && isFinite(v)) ? parseFloat((v * 100).toFixed(dec)) : null;
-  const val2 = (v, dec = 2) => (v != null && isFinite(v) && v !== 0) ? parseFloat(parseFloat(v).toFixed(dec)) : null;
+  // ── Convert Yahoo decimal ratios → % ──────────────────────────────────────
+  const pct2 = (v, d=2) => (v != null && isFinite(v)) ? parseFloat((v*100).toFixed(d)) : null;
+  const val2 = (v, d=2) => (v != null && isFinite(v) && v!==0) ? parseFloat(v.toFixed(d)) : null;
   const sym   = raw.currencySymbol || (isIndian ? '₹' : '$');
 
   currentData = {
-    ticker:          input,
-    companyName:     raw.companyName || input,
-    exchange:        detectedExch,
-    currencyCode:    raw.currency || (isIndian ? 'INR' : 'USD'),
-    currencySymbol:  sym,
-    dataSource:      raw.dataSource + ' · ' + raw.priceDate,
-    sector:          raw.sector   || 'N/A',
-    industry:        raw.industry || 'N/A',
-    ceo:             'N/A', founded: 'N/A',
-    employees:       raw.employees ? raw.employees.toLocaleString() : 'N/A',
-    website:         raw.website  || 'N/A',
-    description:     raw.description || 'Description not available.',
-    priceDate:       raw.priceDate,
+    ticker: input, companyName: raw.companyName || input,
+    exchange: detExch, currencyCode: raw.currency || (isIndian?'INR':'USD'),
+    currencySymbol: sym, dataSource: raw.dataSource + ' · ' + raw.priceDate,
+    confidence: raw.confidence || 0,
+    sector: raw.sector||'N/A', industry: raw.industry||'N/A',
+    ceo: 'N/A', founded: 'N/A',
+    employees: raw.employees ? raw.employees.toLocaleString() : 'N/A',
+    website: raw.website||'N/A', description: raw.description||'Not available.',
+    priceDate: raw.priceDate,
 
-    // Price — all from Yahoo
-    price:         raw.price,
-    previousClose: raw.previousClose || raw.price,
-    open:          raw.open          || raw.price,
-    dayHigh:       raw.dayHigh       || raw.price,
-    dayLow:        raw.dayLow        || raw.price,
-    weekHigh52:    raw.weekHigh52    || raw.price,
-    weekLow52:     raw.weekLow52     || raw.price,
-    volume:        raw.volume    || 0,
-    avgVolume:     raw.avgVolume || 0,
-    marketCap:     raw.marketCapFmt || (raw.marketCap ? fmtMarketCap(raw.marketCap, isIndian) : 'N/A'),
+    // Price
+    price: raw.price, previousClose: raw.previousClose||raw.price,
+    open: raw.open||raw.price, dayHigh: raw.dayHigh||raw.price,
+    dayLow: raw.dayLow||raw.price, weekHigh52: raw.weekHigh52||raw.price,
+    weekLow52: raw.weekLow52||raw.price,
+    volume: raw.volume||0, avgVolume: raw.avgVolume||0,
+    marketCap: raw.marketCapFmt || (raw.marketCap ? fmtLargeNum(raw.marketCap, isIndian) : null),
 
-    // Fundamentals — Yahoo decimals converted to %
-    pe:              val2(raw.pe),
-    forwardPE:       val2(raw.forwardPE),
-    eps:             val2(raw.eps),
-    pb:              val2(raw.pb),
-    ps:              val2(raw.ps),
-    peg:             val2(raw.peg),
-    dividendYield:   pct2(raw.dividendYield, 3),
-    beta:            val2(raw.beta),
-    roe:             pct2(raw.roe),
-    roa:             pct2(raw.roa),
-    debtToEquity:    val2(raw.debtToEquity),
-    currentRatio:    val2(raw.currentRatio),
-    revenueGrowth:   pct2(raw.revenueGrowth),
-    earningsGrowth:  pct2(raw.earningsGrowth),
-    grossMargin:     pct2(raw.grossMargins),
-    operatingMargin: pct2(raw.operatingMargins),
-    profitMargin:    pct2(raw.profitMargins),
+    // Fundamentals — Yahoo decimals → %
+    pe: val2(raw.pe), forwardPE: val2(raw.forwardPE),
+    eps: val2(raw.eps), pb: val2(raw.pb),
+    ps: val2(raw.ps), peg: val2(raw.peg),
+    dividendYield: pct2(raw.dividendYield, 3),
+    beta: val2(raw.beta),
+    roe:            pct2(raw.roe),
+    roa:            pct2(raw.roa),
+    grossMargin:    pct2(raw.grossMargins),
+    operatingMargin:pct2(raw.operatingMargins),
+    profitMargin:   pct2(raw.profitMargins),
+    debtToEquity:   val2(raw.debtToEquity),
+    currentRatio:   val2(raw.currentRatio),
+    revenueGrowth:  pct2(raw.revenueGrowth),
+    earningsGrowth: pct2(raw.earningsGrowth),
+    totalRevenue:   raw.totalRevenueFmt,
+    netIncome:      raw.netIncomeFmt,
+    freeCashflow:   raw.freeCashflowFmt,
 
-    // Technicals — computed from real history
+    // Technicals
     sma20: ind.sma20, sma50: ind.sma50, sma200: ind.sma200,
-    ema20: ind.ema20, ema50: ind.ema50,
-    rsi14: ind.rsi,
-    macd:         ind.macd,
-    macdSignal:   ind.macdSignal,
-    macdHistogram:ind.macdHistogram,
-    bollingerUpper: ind.bbUpper,
-    bollingerMiddle:ind.bbMiddle,
-    bollingerLower: ind.bbLower,
-    stochastic:   ind.stoch,
-    atr:          ind.atr,
-    adxStrength:  ind.adx,
-    obvTrend:     ind.obvTrend,
+    rsi14: ind.rsi, macd: ind.macd, macdSignal: ind.macdSignal,
+    macdHistogram: ind.macdHistogram,
+    bollingerUpper: ind.bbUpper, bollingerMiddle: ind.bbMiddle, bollingerLower: ind.bbLower,
+    stochastic: ind.stoch, atr: ind.atr, adxStrength: ind.adx, obvTrend: ind.obvTrend,
 
-    // Risk — computed
-    volatility30d: risk.volatility,
-    sharpeRatio:   risk.sharpe,
-    maxDrawdown:   risk.maxDrawdown,
-    varDaily:      risk.var95,
-    riskScore:     risk.riskScore,
-    riskLevel:     risk.riskLevel,
+    // Risk
+    volatility30d: risk.volatility, sharpeRatio: risk.sharpe,
+    maxDrawdown: risk.maxDrawdown, varDaily: risk.var95,
+    riskScore: risk.riskScore, riskLevel: risk.riskLevel,
 
     overallSignal: computeSignal(ind, raw.price),
-    monteCarlo:    mc,
+    monteCarlo: mc,
 
     // Charts
-    priceHistory:        closes.slice(-30),
-    rsiHistory:          ind.rsiHistory,
-    macdHistory:         ind.macdHistory,
-    macdSignalHistory:   ind.macdSignalHistory,
-    _rawCloses:          closes,  // full year for MC re-runs
+    priceHistory: closes.slice(-30),
+    rsiHistory: ind.rsiHistory,
+    macdHistory: ind.macdHistory,
+    macdSignalHistory: ind.macdSignalHistory,
+    _rawCloses: closes,
 
-    // Sentiment — AI fills
+    // Sentiment (AI fills)
     sentimentScore: 50,
-    sentiment:      { positive: 40, neutral: 35, negative: 25 },
-    newsHeadlines:  [],
-    peers:          [],
+    sentiment: { positive: 40, neutral: 35, negative: 25 },
+    newsHeadlines: [],
+    peers: [],
   };
 
+  console.debug(`[SS] currentData built: signal=${currentData.overallSignal}, rsi=${currentData.rsi14}, sma50=${currentData.sma50}`);
   saveToHistory(currentData);
 
   // ── Render immediately ────────────────────────────────────────────────────
@@ -1674,61 +1643,69 @@ async function analyzeStock() {
   renderSentiment();
   renderRisk();
   renderFundamentals();
+  showToast('✅ ' + input + ' · ' + sym + raw.price + ' · Yahoo Finance');
 
   // ── Parallel AI agents (non-blocking) ────────────────────────────────────
   const aiKey = aiProvider === 'gemini' ? geminiKey : apiKey;
-  if (aiKey) {
-    const d   = currentData;
-    const mc2 = d.monteCarlo;
+  if (!aiKey) {
+    setEl('ai-overview-section', `<div class="ai-panel"><div class="ai-header"><div class="ai-dot" style="background:var(--yellow)"></div><div class="ai-title">AI DISABLED</div></div><div class="ai-body" style="color:var(--text3)">Add an API key in Settings to enable AI commentary.</div></div>`);
+    return;
+  }
 
-    const techCtx = [
-      `${input} on ${detectedExch} | Price: ${sym}${raw.price} | Signal: ${d.overallSignal}`,
-      `RSI(14): ${ind.rsi?.toFixed(1) ?? 'N/A'} | MACD: ${ind.macd?.toFixed(3) ?? 'N/A'} | Histogram: ${ind.macdHistogram?.toFixed(3) ?? 'N/A'}`,
-      `SMA20: ${sym}${ind.sma20?.toFixed(2) ?? 'N/A'} | SMA50: ${sym}${ind.sma50?.toFixed(2) ?? 'N/A'} | SMA200: ${sym}${ind.sma200?.toFixed(2) ?? 'N/A'}`,
-      `BB Upper: ${sym}${ind.bbUpper?.toFixed(2) ?? 'N/A'} | BB Lower: ${sym}${ind.bbLower?.toFixed(2) ?? 'N/A'}`,
-      `ATR: ${ind.atr?.toFixed(2) ?? 'N/A'} | ADX: ${ind.adx?.toFixed(1) ?? 'N/A'} | Stoch: ${ind.stoch?.toFixed(1) ?? 'N/A'} | OBV: ${ind.obvTrend}`,
-    ].join('\n');
+  const d = currentData, mc2 = d.monteCarlo;
+  const techCtx = [
+    `${input} | ${detExch} | Price: ${sym}${raw.price} | Signal: ${d.overallSignal}`,
+    `RSI(14): ${d.rsi14?.toFixed(1)??'N/A'} | MACD: ${d.macd?.toFixed(3)??'N/A'} | Histogram: ${d.macdHistogram?.toFixed(3)??'N/A'}`,
+    `SMA20: ${sym}${d.sma20?.toFixed(2)??'N/A'} | SMA50: ${sym}${d.sma50?.toFixed(2)??'N/A'} | SMA200: ${sym}${d.sma200?.toFixed(2)??'N/A'}`,
+    `BB Upper: ${sym}${d.bollingerUpper?.toFixed(2)??'N/A'} | BB Lower: ${sym}${d.bollingerLower?.toFixed(2)??'N/A'}`,
+    `ATR: ${d.atr?.toFixed(2)??'N/A'} | ADX: ${d.adxStrength?.toFixed(1)??'N/A'} | Stoch: ${d.stochastic?.toFixed(1)??'N/A'} | OBV: ${d.obvTrend}`,
+  ].join('\n');
 
-    const riskCtx = [
-      `Beta: ${raw.beta?.toFixed(2) ?? 'N/A'} | Ann.Vol: ${risk.volatility?.toFixed(1) ?? 'N/A'}% | Risk Score: ${risk.riskScore}/100`,
-      `Max Drawdown: ${risk.maxDrawdown?.toFixed(1) ?? 'N/A'}% | Sharpe: ${risk.sharpe?.toFixed(2) ?? 'N/A'} | Param.VaR(95%): ${risk.var95?.toFixed(2) ?? 'N/A'}%`,
-      mc2 ? `MC Median: ${sym}${mc2.base} (${mc2.basePct >= 0 ? '+' : ''}${mc2.basePct}%) | Prob Up: ${mc2.probUp}% | MC VaR: ${mc2.mcVaR}%` : 'Monte Carlo: insufficient history',
-    ].join('\n');
+  const riskCtx = [
+    `Beta: ${d.beta?.toFixed(2)??'N/A'} | Ann.Vol: ${d.volatility30d?.toFixed(1)??'N/A'}% | Risk: ${d.riskScore}/100 (${d.riskLevel})`,
+    `Max Drawdown: ${d.maxDrawdown?.toFixed(1)??'N/A'}% | Sharpe: ${d.sharpeRatio?.toFixed(2)??'N/A'} | VaR(95%): ${d.varDaily?.toFixed(2)??'N/A'}%`,
+    mc2 ? `MC Median: ${sym}${mc2.base} (${mc2.basePct>=0?'+':''}${mc2.basePct}%) | Prob Up: ${mc2.probUp}% | MC VaR: ${mc2.mcVaR}%` : 'MC: insufficient history',
+  ].join('\n');
 
-    const fundCtx = [
-      `P/E: ${d.pe?.toFixed(2) ?? 'N/A'} | Fwd P/E: ${d.forwardPE?.toFixed(2) ?? 'N/A'} | PEG: ${d.peg?.toFixed(2) ?? 'N/A'} | P/B: ${d.pb?.toFixed(2) ?? 'N/A'}`,
-      `EPS: ${sym}${d.eps?.toFixed(2) ?? 'N/A'} | Mkt Cap: ${d.marketCap}`,
-      `ROE: ${d.roe?.toFixed(1) ?? 'N/A'}% | ROA: ${d.roa?.toFixed(1) ?? 'N/A'}% | Gross Margin: ${d.grossMargin?.toFixed(1) ?? 'N/A'}% | Op Margin: ${d.operatingMargin?.toFixed(1) ?? 'N/A'}%`,
-      `D/E: ${d.debtToEquity?.toFixed(2) ?? 'N/A'} | Curr.Ratio: ${d.currentRatio?.toFixed(2) ?? 'N/A'} | Rev.Growth: ${d.revenueGrowth?.toFixed(1) ?? 'N/A'}%`,
-      `Sector: ${raw.sector || 'N/A'} | Industry: ${raw.industry || 'N/A'}`,
-    ].join('\n');
+  const fundCtx = [
+    `P/E: ${d.pe?.toFixed(2)??'N/A'} | Fwd P/E: ${d.forwardPE?.toFixed(2)??'N/A'} | P/B: ${d.pb?.toFixed(2)??'N/A'} | P/S: ${d.ps?.toFixed(2)??'N/A'}`,
+    `EPS: ${sym}${d.eps?.toFixed(2)??'N/A'} | Mkt Cap: ${d.marketCap||'N/A'}`,
+    `ROE: ${d.roe?.toFixed(1)??'N/A'}% | ROA: ${d.roa?.toFixed(1)??'N/A'}% | Gross Margin: ${d.grossMargin?.toFixed(1)??'N/A'}% | Op Margin: ${d.operatingMargin?.toFixed(1)??'N/A'}%`,
+    `D/E: ${d.debtToEquity?.toFixed(2)??'N/A'} | Curr.Ratio: ${d.currentRatio?.toFixed(2)??'N/A'} | Rev Growth: ${d.revenueGrowth?.toFixed(1)??'N/A'}%`,
+    `Sector: ${raw.sector||'N/A'} | Confidence: ${Math.round((raw.confidence||0)*100)}%`,
+  ].join('\n');
 
-    const ANALYSIS_PROMPT = `You are a Bloomberg terminal AI writing an institutional equity note. Use only the data below. No generic filler sentences. Be specific to the numbers.
+  const PROMPT_ANALYSIS = `You are a Bloomberg terminal AI writing an institutional equity research note.
+Stock: ${input} (${raw.companyName||input}) — ${raw.sector||''} — ${detExch}
 
-Stock: ${input} (${raw.companyName || input})
-TECHNICAL:
+TECHNICAL DATA:
 ${techCtx}
-RISK:
+
+RISK DATA:
 ${riskCtx}
+
 FUNDAMENTALS:
 ${fundCtx}
 
-Write exactly these 4 sections using markdown bold headers:
+Write a professional 5-section analysis. Use ONLY the real data above. Zero generic filler. Be specific to actual numbers.
 
-**1. TECHNICAL OUTLOOK**
-3-4 sentences: trend vs moving averages, RSI condition, MACD signal, Bollinger Band support/resistance, indicator confluence.
+**1. SUMMARY**
+One paragraph: what this stock is, current market position, and immediate take.
 
-**2. RISK ASSESSMENT**
-3 sentences: volatility regime, drawdown risk, beta interpretation, Monte Carlo downside implication.
+**2. TECHNICAL OUTLOOK**
+3-4 sentences: trend vs moving averages, RSI condition, MACD crossover status, Bollinger Band position, indicator confluence verdict.
 
-**3. FUNDAMENTAL VIEW**
-3 sentences: valuation (cheap/fair/expensive vs growth), profitability quality (margins, returns), balance sheet health.
+**3. RISK ASSESSMENT**
+3 sentences: volatility regime vs sector norms, drawdown risk, beta interpretation, Monte Carlo downside implication.
 
-**4. TRADING BIAS**
-2-3 sentences: Bullish/Neutral/Bearish stance, short-term (1-4 weeks) vs medium-term (1-3 months) view, key risk to thesis.`;
+**4. FUNDAMENTAL VIEW**
+3 sentences: valuation (cheap/fair/expensive vs growth rate), profitability quality, balance sheet health.
 
-    const NEWS_PROMPT = `Financial news analyst. Stock: ${input} (${raw.companyName || input}), ${raw.sector || 'sector unknown'}, ${detectedExch}.
-Reply ONLY in key: value lines, one per line:
+**5. TRADE BIAS**
+2-3 sentences: Bullish/Neutral/Bearish directional stance, short-term (1-4 weeks) vs medium-term (1-3 months), key invalidation level.`;
+
+  const PROMPT_NEWS = `Financial analyst. Stock: ${input} (${raw.companyName||input}), ${raw.sector||''}, ${detExch}.
+Reply ONLY as key: value lines:
 news1: [specific recent headline for ${input}]
 news2: [specific recent headline for ${input}]
 news3: [sector or macro headline relevant to ${input}]
@@ -1736,302 +1713,268 @@ sentimentPos: [0-100]
 sentimentNeu: [0-100]
 sentimentNeg: [0-100]
 sentimentScore: [0-100]
-ceo: [CEO name or Unknown]
+ceo: [name or Unknown]
 founded: [year or Unknown]`;
 
-    Promise.allSettled([
-      callClaude(ANALYSIS_PROMPT, 700),
-      callClaude(NEWS_PROMPT,     300),
-    ]).then(([aRes, nRes]) => {
-      // Bloomberg AI panel
-      if (aRes.status === 'fulfilled' && (aRes.value || '').length > 80) {
-        const html = (aRes.value || '')
-          .replace(/\*\*([^*]+)\*\*/g, '<b style="color:var(--accent);font-family:\'Syne\',sans-serif;letter-spacing:.5px">$1</b>')
-          .replace(/\n\n+/g, '</p><p style="margin-top:12px">')
-          .replace(/\n/g, '<br>');
-        document.getElementById('ai-overview-section').innerHTML = `
-          <div class="ai-panel">
-            <div class="ai-header">
-              <div class="ai-dot"></div>
-              <div class="ai-title">AI RESEARCH NOTE · ${input}</div>
-              <div style="margin-left:auto;font-size:9px;color:var(--text3)">${aiProvider.toUpperCase()}</div>
-            </div>
-            <div class="ai-body" style="line-height:1.85;font-size:12px"><p style="margin:0">${html}</p></div>
-          </div>`;
-      } else {
-        document.getElementById('ai-overview-section').innerHTML = `
-          <div class="ai-panel">
-            <div class="ai-header"><div class="ai-dot" style="background:var(--yellow)"></div><div class="ai-title">AI ANALYSIS UNAVAILABLE</div></div>
-            <div class="ai-body" style="color:var(--text3);font-size:12px">AI quota exceeded or key not set. Price, technicals, and fundamentals above are sourced live from Yahoo Finance via your Vercel API.</div>
-          </div>`;
-      }
+  setEl('ai-overview-section', loadingCard('🤖 Running Bloomberg AI analysis...'));
 
-      // News + sentiment
-      if (nRes.status === 'fulfilled') {
-        const kv = parseKV(nRes.value || '');
-        const h1 = kv.news1 || '', h2 = kv.news2 || '', h3 = kv.news3 || '';
-        if (h1) currentData.newsHeadlines = [h1, h2, h3].filter(Boolean);
-        const sp = Math.max(0, num(kv.sentimentPos, 40));
-        const sn = Math.max(0, num(kv.sentimentNeu, 35));
-        const sg = Math.max(0, num(kv.sentimentNeg, 25));
-        const total = sp + sn + sg || 100;
-        currentData.sentiment = {
-          positive: Math.round(sp / total * 100),
-          neutral:  Math.round(sn / total * 100),
-          negative: Math.round(sg / total * 100),
-        };
-        currentData.sentimentScore = Math.min(100, Math.max(0, num(kv.sentimentScore, 50)));
-        if (kv.ceo && kv.ceo !== 'Unknown') currentData.ceo = kv.ceo;
-        if (kv.founded && kv.founded !== 'Unknown') currentData.founded = kv.founded;
-        renderSentiment();
-      }
-      saveToHistory(currentData);
-    }).catch(err => console.debug('[AI agents]', err.message));
-  } else {
-    document.getElementById('ai-overview-section').innerHTML = `
-      <div class="ai-panel">
-        <div class="ai-header"><div class="ai-dot" style="background:var(--yellow)"></div><div class="ai-title">AI DISABLED</div></div>
-        <div class="ai-body" style="color:var(--text3)">Add an API key in Settings to enable AI commentary. All market data is sourced live from Yahoo Finance.</div>
-      </div>`;
-  }
+  Promise.allSettled([
+    callClaude(PROMPT_ANALYSIS, 800),
+    callClaude(PROMPT_NEWS,     300),
+  ]).then(([aRes, nRes]) => {
+    // Bloomberg AI panel
+    const rawText = (aRes.status === 'fulfilled' ? aRes.value : '') || '';
+    if (rawText.length > 80) {
+      const html = rawText
+        .replace(/\*\*([^*]+)\*\*/g, '<b style="color:var(--accent);font-family:\'Syne\',sans-serif;letter-spacing:.3px">$1</b>')
+        .replace(/\n\n+/g, '</p><p style="margin-top:11px">')
+        .replace(/\n/g, '<br>');
+      setEl('ai-overview-section', `
+        <div class="ai-panel">
+          <div class="ai-header">
+            <div class="ai-dot"></div>
+            <div class="ai-title">AI RESEARCH NOTE · ${input}</div>
+            <div style="margin-left:auto;font-size:9px;color:var(--text3)">${aiProvider.toUpperCase()} · Confidence ${Math.round((raw.confidence||0)*100)}%</div>
+          </div>
+          <div class="ai-body" style="line-height:1.85;font-size:12px"><p style="margin:0">${html}</p></div>
+        </div>`);
+    } else {
+      setEl('ai-overview-section', `<div class="ai-panel"><div class="ai-header"><div class="ai-dot" style="background:var(--yellow)"></div><div class="ai-title">AI UNAVAILABLE</div></div><div class="ai-body" style="color:var(--text3)">AI quota exceeded or key invalid. All market data sourced live from Yahoo Finance.</div></div>`);
+    }
 
-  showToast('✅ ' + input + ' · ' + sym + raw.price + ' · Yahoo Finance');
+    // News + sentiment
+    if (nRes.status === 'fulfilled') {
+      const kv = parseKV(nRes.value || '');
+      const h1 = kv.news1||'', h2 = kv.news2||'', h3 = kv.news3||'';
+      if (h1) currentData.newsHeadlines = [h1,h2,h3].filter(Boolean);
+      const sp = Math.max(0, numParse(kv.sentimentPos, 40));
+      const sn = Math.max(0, numParse(kv.sentimentNeu, 35));
+      const sg = Math.max(0, numParse(kv.sentimentNeg, 25));
+      const tot = sp+sn+sg || 100;
+      currentData.sentiment = { positive: Math.round(sp/tot*100), neutral: Math.round(sn/tot*100), negative: Math.round(sg/tot*100) };
+      currentData.sentimentScore = Math.min(100, Math.max(0, numParse(kv.sentimentScore, 50)));
+      if (kv.ceo && kv.ceo !== 'Unknown') currentData.ceo = kv.ceo;
+      if (kv.founded && kv.founded !== 'Unknown') currentData.founded = kv.founded;
+      renderSentiment();
+    }
+    saveToHistory(currentData);
+  }).catch(e => console.debug('[AI]', e.message));
 }
 
 // ==================== INDICATOR ENGINE ====================
 function computeIndicators(closes, highs, lows, volumes, currentPrice) {
-  const n = closes.length;
-  if (n < 2) return { sma20:null,sma50:null,sma200:null,ema20:null,ema50:null,rsi:50,macd:0,macdSignal:0,macdHistogram:0,bbUpper:null,bbMiddle:null,bbLower:null,stoch:50,atr:null,adx:null,obvTrend:'neutral',rsiHistory:[],macdHistory:[],macdSignalHistory:[] };
+  const len = closes.length;
+  const EMPTY = { sma20:null,sma50:null,sma200:null,rsi:50,macd:0,macdSignal:0,macdHistogram:0,
+    bbUpper:null,bbMiddle:null,bbLower:null,stoch:50,atr:null,adx:null,obvTrend:'neutral',
+    rsiHistory:[],macdHistory:[],macdSignalHistory:[] };
+  if (len < 2) return EMPTY;
 
   const f2 = v => v != null ? parseFloat(v.toFixed(2)) : null;
   const f3 = v => v != null ? parseFloat(v.toFixed(3)) : null;
 
   // SMA
-  const sma = (arr, period) => {
-    if (arr.length < period) return null;
-    const sl = arr.slice(-period);
-    return f2(sl.reduce((a,b)=>a+b,0)/period);
+  const sma = (arr, p) => {
+    if (arr.length < p) return null;
+    return f2(arr.slice(-p).reduce((a,b) => a+b, 0) / p);
   };
 
   // EMA
-  const ema = (arr, period) => {
-    if (arr.length < period) return null;
-    const k = 2/(period+1);
-    let e = arr.slice(0,period).reduce((a,b)=>a+b,0)/period;
-    for (let i=period;i<arr.length;i++) e = arr[i]*k + e*(1-k);
+  const ema = (arr, p) => {
+    if (arr.length < p) return null;
+    const k = 2/(p+1);
+    let e = arr.slice(0,p).reduce((a,b) => a+b, 0) / p;
+    for (let i=p; i<arr.length; i++) e = arr[i]*k + e*(1-k);
     return f2(e);
   };
 
   // EMA series
-  const emaSeries = (arr, period) => {
-    if (arr.length < period) return new Array(arr.length).fill(null);
-    const k = 2/(period+1);
+  const emaSeries = (arr, p) => {
     const out = new Array(arr.length).fill(null);
-    let e = arr.slice(0,period).reduce((a,b)=>a+b,0)/period;
-    out[period-1] = e;
-    for (let i=period;i<arr.length;i++) { e = arr[i]*k+e*(1-k); out[i]=e; }
+    if (arr.length < p) return out;
+    const k = 2/(p+1);
+    let e = arr.slice(0,p).reduce((a,b) => a+b, 0) / p;
+    out[p-1] = e;
+    for (let i=p; i<arr.length; i++) { e = arr[i]*k+e*(1-k); out[i]=e; }
     return out;
   };
 
-  // RSI (Wilder smoothing)
-  const computeRSI = (arr, period=14) => {
-    if (arr.length < period+1) return 50;
-    const ch = arr.slice(1).map((v,i)=>v-arr[i]);
-    let ag = ch.slice(0,period).filter(c=>c>0).reduce((a,b)=>a+b,0)/period;
-    let al = Math.abs(ch.slice(0,period).filter(c=>c<0).reduce((a,b)=>a+b,0))/period;
-    for (let i=period;i<ch.length;i++) {
-      ag = (ag*(period-1) + Math.max(ch[i],0))/period;
-      al = (al*(period-1) + Math.abs(Math.min(ch[i],0)))/period;
+  // RSI — Wilder smoothing
+  const rsiCalc = (arr, p=14) => {
+    if (arr.length < p+1) return 50;
+    const ch = arr.slice(1).map((v,i) => v - arr[i]);
+    let ag = ch.slice(0,p).filter(c=>c>0).reduce((a,b)=>a+b,0)/p;
+    let al = Math.abs(ch.slice(0,p).filter(c=>c<0).reduce((a,b)=>a+b,0))/p;
+    for (let i=p; i<ch.length; i++) {
+      ag = (ag*(p-1) + Math.max(ch[i],0)) / p;
+      al = (al*(p-1) + Math.abs(Math.min(ch[i],0))) / p;
     }
-    return al===0 ? 100 : parseFloat((100-100/(1+ag/al)).toFixed(1));
+    return al === 0 ? 100 : parseFloat((100-100/(1+ag/al)).toFixed(1));
   };
 
-  // RSI history (last 30)
-  const rsiHistory = closes.map((_,i,a) => {
-    if (i<15) return 50;
-    return computeRSI(a.slice(0,i+1),14);
-  }).slice(-30);
+  const rsiHistory = closes.map((_,i,a) => i < 15 ? 50 : rsiCalc(a.slice(0,i+1))).slice(-30);
 
   // MACD
-  const ema12s = emaSeries(closes,12);
-  const ema26s = emaSeries(closes,26);
-  const macdLine = ema12s.map((v,i) => v!=null&&ema26s[i]!=null ? v-ema26s[i] : null);
-  const macdValid = macdLine.filter(v=>v!=null);
-  const signalS   = emaSeries(macdValid,9);
-  const macdNow   = macdValid.slice(-1)[0]   || 0;
-  const sigNow    = signalS.slice(-1)[0]     || 0;
-  const macdHistory       = macdValid.slice(-30).map(v=>f3(v));
-  const macdSignalHistory = signalS.slice(-30).map(v=>f3(v)||0);
+  const ema12s = emaSeries(closes, 12);
+  const ema26s = emaSeries(closes, 26);
+  const macdLine  = ema12s.map((v,i) => v!=null&&ema26s[i]!=null ? v-ema26s[i] : null);
+  const macdValid = macdLine.filter(v => v!=null);
+  const signalSeries = emaSeries(macdValid, 9);
+  const macdNow  = macdValid.slice(-1)[0]   || 0;
+  const sigNow   = signalSeries.slice(-1)[0] || 0;
 
   // Bollinger Bands
-  let bbUpper=null,bbMiddle=null,bbLower=null;
-  if (closes.length>=20) {
-    const sl=closes.slice(-20);
-    const mean=sl.reduce((a,b)=>a+b,0)/20;
-    const std=Math.sqrt(sl.reduce((a,b)=>a+(b-mean)**2,0)/20);
-    bbUpper=f2(mean+2*std); bbMiddle=f2(mean); bbLower=f2(mean-2*std);
+  let bbUpper=null, bbMiddle=null, bbLower=null;
+  if (len >= 20) {
+    const sl = closes.slice(-20);
+    const m  = sl.reduce((a,b)=>a+b,0)/20;
+    const sd = Math.sqrt(sl.reduce((a,b)=>a+(b-m)**2,0)/20);
+    bbUpper=f2(m+2*sd); bbMiddle=f2(m); bbLower=f2(m-2*sd);
   }
 
   // Stochastic
-  let stoch=null;
-  if (closes.length>=14&&highs.length>=14&&lows.length>=14) {
-    const hh=Math.max(...highs.slice(-14));
-    const ll=Math.min(...lows.slice(-14));
-    stoch = hh===ll ? 50 : f2((currentPrice-ll)/(hh-ll)*100);
-    stoch = Math.max(0,Math.min(100,stoch));
+  let stoch = null;
+  if (len>=14 && highs.length>=14 && lows.length>=14) {
+    const hh = Math.max(...highs.slice(-14));
+    const ll = Math.min(...lows.slice(-14));
+    stoch = hh===ll ? 50 : Math.max(0, Math.min(100, f2((currentPrice-ll)/(hh-ll)*100)));
   }
 
   // ATR
-  let atr=null;
-  if (highs.length>=15&&lows.length>=15&&closes.length>=15) {
-    const trs=highs.slice(-14).map((h,i)=>{
-      const l=lows.slice(-14)[i]; const pc=closes.slice(-15)[i];
-      return Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc));
+  let atr = null;
+  if (highs.length>=15 && lows.length>=15 && len>=15) {
+    const trs = highs.slice(-14).map((h,i) => {
+      const l=lows.slice(-14)[i], pc=closes.slice(-15)[i];
+      return Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc));
     });
-    atr=f2(trs.reduce((a,b)=>a+b,0)/trs.length);
+    atr = f2(trs.reduce((a,b)=>a+b,0)/trs.length);
   }
 
   // ADX
-  let adx=null;
-  if (highs.length>=28) {
-    const p=14;
-    const dmp=[],dmm=[],tr=[];
-    for(let i=1;i<highs.length;i++){
-      const up=highs[i]-highs[i-1],dn=lows[i-1]-lows[i];
-      dmp.push(up>dn&&up>0?up:0);
-      dmm.push(dn>up&&dn>0?dn:0);
+  let adx = null;
+  if (highs.length >= 28) {
+    const p=14, dmp=[], dmm=[], tr=[];
+    for (let i=1; i<highs.length; i++) {
+      const up=highs[i]-highs[i-1], dn=lows[i-1]-lows[i];
+      dmp.push(up>dn&&up>0?up:0); dmm.push(dn>up&&dn>0?dn:0);
       const h=highs[i],l=lows[i],pc=closes[i-1];
-      tr.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));
+      tr.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)));
     }
-    const sTR=tr.slice(-p).reduce((a,b)=>a+b,0);
-    if (sTR>0){
-      const diP=(dmp.slice(-p).reduce((a,b)=>a+b,0)/sTR)*100;
-      const diM=(dmm.slice(-p).reduce((a,b)=>a+b,0)/sTR)*100;
-      const sum=diP+diM;
-      adx = sum>0 ? f2(Math.abs(diP-diM)/sum*100) : null;
+    const sTR = tr.slice(-p).reduce((a,b)=>a+b,0);
+    if (sTR > 0) {
+      const diP = (dmp.slice(-p).reduce((a,b)=>a+b,0)/sTR)*100;
+      const diM = (dmm.slice(-p).reduce((a,b)=>a+b,0)/sTR)*100;
+      const sum = diP+diM;
+      adx = sum > 0 ? f2(Math.abs(diP-diM)/sum*100) : null;
     }
   }
 
-  // OBV trend
+  // OBV
   let obv=0;
-  const obvS=closes.slice(-20).map((c,i,a)=>{
-    if(i===0) return 0;
-    const vol=volumes.slice(-20)[i]||0;
+  const obvS = closes.slice(-20).map((c,i,a) => {
+    if (i===0) return 0;
+    const vol = (volumes.slice(-20)[i]||0);
     obv += c>a[i-1]?vol:c<a[i-1]?-vol:0;
     return obv;
   });
-  const obvTrend=obvS[obvS.length-1]>obvS[0]?'bullish':'bearish';
+  const obvTrend = obvS[obvS.length-1] > obvS[0] ? 'bullish' : 'bearish';
 
   return {
-    sma20:sma(closes,20), sma50:sma(closes,50), sma200:sma(closes,200),
-    ema20:ema(closes,20), ema50:ema(closes,50),
-    rsi:computeRSI(closes), rsiHistory,
-    macd:f3(macdNow), macdSignal:f3(sigNow), macdHistogram:f3(macdNow-sigNow),
-    macdHistory, macdSignalHistory,
-    bbUpper, bbMiddle, bbLower,
-    stoch, atr, adx, obvTrend,
+    sma20: sma(closes,20), sma50: sma(closes,50), sma200: sma(closes,200),
+    rsi:   rsiCalc(closes),  rsiHistory,
+    macd:  f3(macdNow),  macdSignal: f3(sigNow), macdHistogram: f3(macdNow-sigNow),
+    macdHistory:       macdValid.slice(-30).map(v=>f3(v)),
+    macdSignalHistory: signalSeries.slice(-30).map(v=>f3(v)||0),
+    bbUpper, bbMiddle, bbLower, stoch, atr, adx, obvTrend,
   };
 }
 
 // ==================== RISK ENGINE ====================
-function computeRisk(closes, betaFromYahoo, currentPrice, prevClose) {
-  if (!closes || closes.length < 5) {
-    return { volatility:0, sharpe:0, maxDrawdown:0, var95:0, riskScore:50, riskLevel:'MODERATE' };
-  }
+function computeRisk(closes, betaFromYahoo, currentPrice) {
+  const EMPTY = { volatility:0, sharpe:0, maxDrawdown:0, var95:0, riskScore:50, riskLevel:'MODERATE' };
+  if (!closes || closes.length < 5) return EMPTY;
   const logRet = [];
-  for (let i=1;i<closes.length;i++) {
-    const r=Math.log(closes[i]/closes[i-1]);
+  for (let i=1; i<closes.length; i++) {
+    const r = Math.log(closes[i]/closes[i-1]);
     if (isFinite(r)) logRet.push(r);
   }
-  if (logRet.length < 3) return { volatility:0, sharpe:0, maxDrawdown:0, var95:0, riskScore:50, riskLevel:'MODERATE' };
-  const N=logRet.length;
-  const mean=logRet.reduce((a,b)=>a+b,0)/N;
-  const variance=logRet.reduce((a,b)=>a+(b-mean)**2,0)/(N-1);
-  const dailyStd=Math.sqrt(variance);
-  const volatility=parseFloat((dailyStd*Math.sqrt(252)*100).toFixed(2));
-  const annualReturn=mean*252*100;
-  const sharpe=dailyStd>0?parseFloat(((annualReturn-6)/(dailyStd*Math.sqrt(252)*100)).toFixed(2)):0;
-  let peak=-Infinity,maxDD=0;
-  for (const c of closes) {
-    if(c>peak) peak=c;
-    const dd=(peak-c)/peak*100;
-    if(dd>maxDD) maxDD=dd;
-  }
-  const maxDrawdown=parseFloat((-maxDD).toFixed(2));
-  const var95=parseFloat((-(mean-1.645*dailyStd)*100).toFixed(2));
-  const beta=betaFromYahoo||1;
-  const volS=Math.min(volatility/80*40,40);
-  const ddS=Math.min(maxDD/60*30,30);
-  const betS=Math.min(Math.abs(beta)/2.5*30,30);
-  const riskScore=Math.round(volS+ddS+betS);
-  const riskLevel=riskScore<33?'LOW':riskScore<66?'MODERATE':'HIGH';
-  return { volatility, sharpe, maxDrawdown, var95, riskScore, riskLevel };
+  if (logRet.length < 3) return EMPTY;
+  const N   = logRet.length;
+  const mu  = logRet.reduce((a,b)=>a+b,0)/N;
+  const var_ = logRet.reduce((a,b)=>a+(b-mu)**2,0)/(N-1);
+  const sig  = Math.sqrt(var_);
+  const vol  = parseFloat((sig*Math.sqrt(252)*100).toFixed(2));
+  const shr  = sig > 0 ? parseFloat(((mu*252*100-6)/(sig*Math.sqrt(252)*100)).toFixed(2)) : 0;
+  let peak=-Infinity, maxDD=0;
+  for (const c of closes) { if(c>peak) peak=c; const dd=(peak-c)/peak*100; if(dd>maxDD) maxDD=dd; }
+  const maxDrawdown = parseFloat((-maxDD).toFixed(2));
+  const var95       = parseFloat((-(mu-1.645*sig)*100).toFixed(2));
+  const beta        = betaFromYahoo || 1;
+  const riskScore   = Math.min(100, Math.round(Math.min(vol/80*40,40) + Math.min(maxDD/60*30,30) + Math.min(Math.abs(beta)/2.5*30,30)));
+  return { volatility:vol, sharpe:shr, maxDrawdown, var95, riskScore, riskLevel: riskScore<33?'LOW':riskScore<66?'MODERATE':'HIGH' };
 }
 
 // ==================== MONTE CARLO ENGINE ====================
 function runMonteCarloEngine(closes, currentPrice, numPaths=5000, days=30) {
-  const valid=(closes||[]).filter(v=>v!=null&&v>0);
-  if(valid.length<30) return null;
-  const logRet=[];
-  for(let i=1;i<valid.length;i++){const r=Math.log(valid[i]/valid[i-1]);if(isFinite(r))logRet.push(r);}
-  if(logRet.length<20) return null;
-  const N=logRet.length;
-  const mu=logRet.reduce((a,b)=>a+b,0)/N;
+  const valid = (closes||[]).filter(v => v!=null && v>0);
+  if (valid.length < 30) return null;
+  const logRet = [];
+  for (let i=1; i<valid.length; i++) { const r=Math.log(valid[i]/valid[i-1]); if(isFinite(r)) logRet.push(r); }
+  if (logRet.length < 20) return null;
+  const N=logRet.length, mu=logRet.reduce((a,b)=>a+b,0)/N;
   const variance=logRet.reduce((a,b)=>a+(b-mu)**2,0)/(N-1);
-  const sigma=Math.sqrt(variance);
-  const drift=mu-variance/2;
+  const sigma=Math.sqrt(variance), drift=mu-variance/2;
+  // Box-Muller paired
   let spare=null;
-  const rn=()=>{
-    if(spare!==null){const s=spare;spare=null;return s;}
+  const rn = () => {
+    if (spare!==null) { const s=spare; spare=null; return s; }
     let u,v,s2;
-    do{u=Math.random()*2-1;v=Math.random()*2-1;s2=u*u+v*v;}while(s2>=1||s2===0);
-    const f=Math.sqrt(-2*Math.log(s2)/s2);
-    spare=v*f; return u*f;
+    do { u=Math.random()*2-1; v=Math.random()*2-1; s2=u*u+v*v; } while(s2>=1||s2===0);
+    const f=Math.sqrt(-2*Math.log(s2)/s2); spare=v*f; return u*f;
   };
   const S0=currentPrice;
   const finals=new Float64Array(numPaths);
-  const paths=[];
-  for(let p=0;p<numPaths;p++){
+  const samplePaths=[];
+  for (let p=0; p<numPaths; p++) {
     let pr=S0;
     const store=p<10;
     const path=store?[parseFloat(S0.toFixed(2))]:null;
-    for(let d=0;d<days;d++){pr*=Math.exp(drift+sigma*rn());if(store)path.push(parseFloat(pr.toFixed(2)));}
+    for (let d=0; d<days; d++) { pr*=Math.exp(drift+sigma*rn()); if(store) path.push(parseFloat(pr.toFixed(2))); }
     finals[p]=pr;
-    if(store)paths.push(path);
+    if (store) samplePaths.push(path);
   }
   finals.sort();
   const pct=p=>finals[Math.floor(numPaths*p)];
   const f2=v=>parseFloat(v.toFixed(2));
   const fpct=v=>parseFloat(((v-S0)/S0*100).toFixed(2));
-  const mean2=Array.from(finals).reduce((a,b)=>a+b,0)/numPaths;
-  let up=0;for(let i=0;i<numPaths;i++)if(finals[i]>S0)up++;
+  const meanP=Array.from(finals).reduce((a,b)=>a+b,0)/numPaths;
+  let up=0; for(let i=0;i<numPaths;i++) if(finals[i]>S0) up++;
   return {
-    bear:f2(pct(.05)),   bearPct:fpct(pct(.05)),
-    q25: f2(pct(.25)),   q25Pct: fpct(pct(.25)),
-    base:f2(pct(.50)),   basePct:fpct(pct(.50)),
-    expected:f2(mean2),  expectedPct:fpct(mean2),
-    q75: f2(pct(.75)),   q75Pct: fpct(pct(.75)),
-    bull:f2(pct(.95)),   bullPct:fpct(pct(.95)),
+    bear:f2(pct(.05)), bearPct:fpct(pct(.05)),
+    q25: f2(pct(.25)), q25Pct: fpct(pct(.25)),
+    base:f2(pct(.50)), basePct:fpct(pct(.50)),
+    expected:f2(meanP), expectedPct:fpct(meanP),
+    q75: f2(pct(.75)), q75Pct: fpct(pct(.75)),
+    bull:f2(pct(.95)), bullPct:fpct(pct(.95)),
     probUp:parseFloat((up/numPaths*100).toFixed(1)),
     mcVaR:parseFloat(((pct(.05)-S0)/S0*100).toFixed(2)),
-    expectedReturn:parseFloat(((mean2-S0)/S0*100).toFixed(2)),
+    expectedReturn:parseFloat(((meanP-S0)/S0*100).toFixed(2)),
     annualVol:parseFloat((sigma*Math.sqrt(252)*100).toFixed(2)),
     dailyStd:parseFloat((sigma*100).toFixed(3)),
     drift:parseFloat((drift*100).toFixed(4)),
     paths:numPaths, days, currentPrice:S0,
-    historyDays:valid.length, samplePaths:paths, ticker:'',
+    historyDays:valid.length, samplePaths, ticker:'',
   };
 }
 
 // ==================== SIGNAL ENGINE ====================
 function computeSignal(ind, price) {
-  let score=0;
-  if(ind.rsi!=null){if(ind.rsi<30)score+=2;else if(ind.rsi<45)score+=1;else if(ind.rsi>70)score-=2;else if(ind.rsi>55)score-=1;}
-  if(ind.macd!=null&&ind.macdSignal!=null){score+=ind.macd>ind.macdSignal?1:-1;}
-  if(ind.sma50!=null){score+=price>ind.sma50?1:-1;}
-  if(ind.sma200!=null){score+=price>ind.sma200?1:-1;}
-  if(ind.stoch!=null){if(ind.stoch<20)score+=1;else if(ind.stoch>80)score-=1;}
-  return score>=2?'BUY':score<=-2?'SELL':'HOLD';
+  let s=0;
+  if(ind.rsi!=null){if(ind.rsi<30)s+=2;else if(ind.rsi<45)s+=1;else if(ind.rsi>70)s-=2;else if(ind.rsi>55)s-=1;}
+  if(ind.macd!=null&&ind.macdSignal!=null) s+=ind.macd>ind.macdSignal?1:-1;
+  if(ind.sma50!=null)  s+=price>ind.sma50?1:-1;
+  if(ind.sma200!=null) s+=price>ind.sma200?1:-1;
+  if(ind.stoch!=null){if(ind.stoch<20)s+=1;else if(ind.stoch>80)s-=1;}
+  return s>=2?'BUY':s<=-2?'SELL':'HOLD';
 }
 
 // ==================== MONTE CARLO UI ====================
@@ -2044,109 +1987,93 @@ function selectMCHorizon(btn, days) {
 
 async function runMonteCarlo() {
   if (!currentData) { showToast('⚠️ Analyze a stock first'); return; }
-  const days = _mcHorizonDays || 30;
-  const allC  = (currentData._rawCloses || currentData.priceHistory || []).filter(v => v != null && v > 0);
-
-  if (allC.length < 30) {
-    document.getElementById('mc-results').innerHTML = errorCard('Need ≥30 trading days of history. Got: ' + allC.length);
-    return;
-  }
-
+  const days  = _mcHorizonDays || 30;
+  const allC  = (currentData._rawCloses || currentData.priceHistory || []).filter(v => v!=null&&v>0);
+  const sym   = currentData.currencySymbol || '₹';
   const titleEl = document.getElementById('mc-chart-title');
   const subEl   = document.getElementById('mc-chart-sub');
   const runBtn  = document.getElementById('mc-run-btn');
-  if (titleEl) titleEl.textContent = days + '-DAY SIMULATION';
-  if (subEl)   subEl.textContent   = 'Running 5,000 paths...';
-  if (runBtn)  { runBtn.disabled = true; runBtn.textContent = '⏳'; }
-  showToast('🎲 Computing 5,000 Monte Carlo paths...');
 
-  await new Promise(r => setTimeout(r, 30)); // yield to repaint
+  if (allC.length < 30) {
+    setEl('mc-results', errorCard('Need ≥30 candles for simulation. Got: ' + allC.length));
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = days + '-DAY MONTE CARLO';
+  if (subEl)   subEl.textContent   = 'Computing 5,000 paths...';
+  if (runBtn)  { runBtn.disabled=true; runBtn.textContent='⏳'; }
+  showToast('🎲 Running 5,000-path Monte Carlo...');
+
+  await new Promise(r => setTimeout(r, 30));
 
   const mc = runMonteCarloEngine(allC, currentData.price, 5000, days);
   if (!mc) {
     if (subEl) subEl.textContent = 'Simulation failed';
-    if (runBtn) { runBtn.disabled = false; runBtn.textContent = '▶ RUN'; }
-    showToast('⚠️ Monte Carlo failed');
-    return;
+    if (runBtn) { runBtn.disabled=false; runBtn.textContent='▶ RUN'; }
+    showToast('⚠️ Monte Carlo failed'); return;
   }
   mc.ticker = currentData.ticker;
   currentData.monteCarlo = mc;
 
-  const sym = currentData.currencySymbol || '₹';
-  const S0  = mc.currentPrice;
+  const S0 = mc.currentPrice;
 
-  // ── Chart ─────────────────────────────────────────────────────────────────
+  // Chart
   const ctx = document.getElementById('mc-chart');
   if (ctx) {
-    if (mcChart) { mcChart.destroy(); mcChart = null; }
-    const labels   = Array.from({length:days+1}, (_,i) => i===0?'Now':'D'+i);
-    const datasets = [];
-
-    (mc.samplePaths||[]).forEach((path, pi) => {
-      const opacity = 0.07 + pi*0.005;
-      datasets.push({ data:path, borderColor:`rgba(0,212,255,${opacity})`, borderWidth:1, fill:false, pointRadius:0, tension:0.25 });
+    if (mcChart) { mcChart.destroy(); mcChart=null; }
+    const labels = Array.from({length:days+1}, (_,i) => i===0?'Now':'D'+i);
+    const ds = [];
+    (mc.samplePaths||[]).forEach((path,pi) => {
+      ds.push({ data:path, borderColor:`rgba(0,212,255,${0.06+pi*0.005})`, borderWidth:1, fill:false, pointRadius:0, tension:0.25 });
     });
-
-    // Median highlight
     if (mc.samplePaths?.length >= 5) {
-      datasets.push({
-        label:'Median', data:mc.samplePaths[Math.floor(mc.samplePaths.length/2)],
-        borderColor:'#00d4ff', borderWidth:2.5, fill:false, pointRadius:0, tension:0.25,
-      });
+      ds.push({ label:'Median', data:mc.samplePaths[Math.floor(mc.samplePaths.length/2)], borderColor:'#00d4ff', borderWidth:2.5, fill:false, pointRadius:0, tension:0.25 });
     }
-    // Reference lines
-    datasets.push({ label:'Bear', data:Array(days+1).fill(mc.bear), borderColor:'rgba(255,71,87,0.55)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
-    datasets.push({ label:'Bull', data:Array(days+1).fill(mc.bull), borderColor:'rgba(0,229,160,0.55)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
-    datasets.push({ label:'Entry', data:Array(days+1).fill(S0),     borderColor:'rgba(255,217,61,0.45)',borderWidth:1,   borderDash:[3,3], fill:false, pointRadius:0 });
-
+    ds.push({ label:'Bear', data:Array(days+1).fill(mc.bear), borderColor:'rgba(255,71,87,0.6)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
+    ds.push({ label:'Bull', data:Array(days+1).fill(mc.bull), borderColor:'rgba(0,229,160,0.6)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
+    ds.push({ label:'Entry', data:Array(days+1).fill(S0), borderColor:'rgba(255,217,61,0.45)', borderWidth:1, borderDash:[3,3], fill:false, pointRadius:0 });
     try {
       mcChart = new Chart(ctx, {
-        type:'line', data:{labels,datasets},
+        type:'line', data:{labels,datasets:ds},
         options:{
           responsive:true, maintainAspectRatio:true, animation:{duration:350},
-          plugins:{
-            legend:{display:false},
-            tooltip:{mode:'index',intersect:false,filter:i=>!!i.dataset.label,
-              callbacks:{label:i=>i.dataset.label+': '+sym+parseFloat(i.raw).toFixed(2)}}
-          },
+          plugins:{ legend:{display:false}, tooltip:{mode:'index',intersect:false, filter:i=>!!i.dataset.label, callbacks:{label:i=>i.dataset.label+': '+sym+parseFloat(i.raw).toFixed(2)}} },
           scales:{
             x:{display:true,ticks:{color:'#4a6080',font:{size:9},maxTicksLimit:10},grid:{display:false}},
-            y:{grid:{color:'rgba(30,45,74,0.4)'},ticks:{color:'#4a6080',font:{size:9},
-              callback:v=>sym+v.toLocaleString('en-IN',{maximumFractionDigits:0})}}
+            y:{grid:{color:'rgba(30,45,74,0.4)'},ticks:{color:'#4a6080',font:{size:9},callback:v=>sym+v.toLocaleString('en-IN',{maximumFractionDigits:0})}}
           }
         }
       });
     } catch(e) { console.error('[MC Chart]', e.message); }
   }
 
-  if (subEl) subEl.textContent = mc.paths.toLocaleString()+' paths · '+mc.historyDays+' days history · GBM';
+  if (subEl) subEl.textContent = mc.paths.toLocaleString()+' paths · '+mc.historyDays+' days · GBM';
   if (runBtn) { runBtn.disabled=false; runBtn.textContent='▶ RUN'; }
 
-  // ── Results ───────────────────────────────────────────────────────────────
-  const ps = v => (v>=0?'+':'')+v+'%';
-  const pc = v => v>0?'var(--green)':v<0?'var(--red)':'var(--text2)';
+  const ps  = v => (v!=null?(v>=0?'+':'')+v+'%':'N/A');
+  const pco = v => (v!=null?(v>0?'var(--green)':v<0?'var(--red)':'var(--text2)'):'var(--text2)');
 
-  document.getElementById('mc-results').innerHTML = `
+  const scenCard = (label, price, pct, col, bg, br) => `
+    <div style="background:${bg};border:1px solid ${br};border-radius:8px;padding:10px;text-align:center">
+      <div style="font-size:8px;font-weight:700;letter-spacing:1px;color:var(--text3);margin-bottom:3px">${label}</div>
+      <div style="font-size:13px;font-weight:800;color:${col}">${sym}${price??'N/A'}</div>
+      <div style="font-size:10px;color:${col}">${pct!=null?ps(pct):'N/A'}</div>
+    </div>`;
+
+  setEl('mc-results', `
   <div style="margin-top:14px">
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:12px">
-      ${[
-        {label:'BEAR 5%',price:mc.bear,pct:mc.bearPct,col:'var(--red)',bg:'rgba(255,71,87,0.06)',br:'rgba(255,71,87,0.2)'},
-        {label:'Q25',    price:mc.q25, pct:mc.q25Pct, col:'var(--orange)',bg:'rgba(255,107,53,0.06)',br:'rgba(255,107,53,0.2)'},
-        {label:'MEDIAN', price:mc.base,pct:mc.basePct, col:'var(--accent)',bg:'rgba(0,212,255,0.06)',br:'rgba(0,212,255,0.2)'},
-        {label:'Q75',    price:mc.q75, pct:mc.q75Pct, col:'var(--yellow)',bg:'rgba(255,217,61,0.06)',br:'rgba(255,217,61,0.2)'},
-        {label:'BULL 95%',price:mc.bull,pct:mc.bullPct,col:'var(--green)',bg:'rgba(0,229,160,0.06)',br:'rgba(0,229,160,0.2)'},
-      ].map(s=>`
-        <div style="background:${s.bg};border:1px solid ${s.br};border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:8px;font-weight:700;letter-spacing:1px;color:var(--text3);margin-bottom:3px">${s.label}</div>
-          <div style="font-size:${s.label==='MEDIAN'?'14':'13'}px;font-weight:800;color:${s.col}">${sym}${s.price??'N/A'}</div>
-          <div style="font-size:10px;color:${s.col}">${s.pct!=null?ps(s.pct):'N/A'}</div>
-        </div>`).join('')}
+      ${scenCard('BEAR 5%', mc.bear, mc.bearPct,     'var(--red)',    'rgba(255,71,87,0.06)',  'rgba(255,71,87,0.2)')}
+      ${scenCard('Q25',     mc.q25,  mc.q25Pct,      'var(--orange)', 'rgba(255,107,53,0.06)', 'rgba(255,107,53,0.2)')}
+      ${scenCard('MEDIAN',  mc.base, mc.basePct,      'var(--accent)', 'rgba(0,212,255,0.06)',  'rgba(0,212,255,0.2)')}
+      ${scenCard('Q75',     mc.q75,  mc.q75Pct,      'var(--yellow)', 'rgba(255,217,61,0.06)', 'rgba(255,217,61,0.2)')}
+      ${scenCard('BULL 95%',mc.bull, mc.bullPct,      'var(--green)',  'rgba(0,229,160,0.06)',  'rgba(0,229,160,0.2)')}
     </div>
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px">
       <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
         <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">EXPECTED PRICE</div>
-        <div style="font-size:16px;font-weight:800;color:${pc(mc.expectedReturn)}">${sym}${mc.expected??'N/A'}</div>
-        <div style="font-size:11px;color:${pc(mc.expectedReturn)}">${ps(mc.expectedReturn??0)}</div>
+        <div style="font-size:16px;font-weight:800;color:${pco(mc.expectedReturn)}">${sym}${mc.expected??'N/A'}</div>
+        <div style="font-size:11px;color:${pco(mc.expectedReturn)}">${ps(mc.expectedReturn??0)}</div>
       </div>
       <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
         <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">PROB. UPSIDE</div>
@@ -2159,15 +2086,15 @@ async function runMonteCarlo() {
         <div style="font-size:11px;color:var(--text3)">worst-case ${days}D loss</div>
       </div>
       <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">ANNUAL VOLATILITY</div>
+        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">ANNUAL VOL</div>
         <div style="font-size:16px;font-weight:800;color:var(--yellow)">${mc.annualVol}%</div>
         <div style="font-size:11px;color:var(--text3)">daily σ = ${mc.dailyStd}%</div>
       </div>
     </div>
     <div style="padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:9px;color:var(--text3)">
-      GBM · drift ${mc.drift}%/day · σ ${mc.dailyStd}%/day · annualised ${mc.annualVol}% · ${mc.historyDays} days history · 5,000 paths · Itô corrected
+      GBM · drift=${mc.drift}%/day · σ=${mc.dailyStd}%/day · ${mc.historyDays} days history · ${mc.paths.toLocaleString()} paths · Itô corrected
     </div>
-  </div>`;
+  </div>`);
 
   showToast('✅ MC complete · ' + days + 'D · ' + mc.paths.toLocaleString() + ' paths');
 }
@@ -2181,16 +2108,20 @@ function renderOverview() {
   const chg   = d.price - prev;
   const chgP  = prev > 0 ? (chg/prev*100) : 0;
   const isUp  = chg >= 0;
-  const nv    = (v,dec=2) => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(dec):'N/A';
-  const fmtP  = v => (v!=null&&!isNaN(v)&&v!==0)?sym+fmt(v):'N/A';
+  const fP    = v => (v!=null&&!isNaN(v)&&v!==0) ? sym+fmt(v) : 'N/A';
+  const fS    = (v,suf='',dec=2) => (v!=null&&!isNaN(v)&&v!==0) ? parseFloat(v).toFixed(dec)+suf : 'N/A';
+  const fPct  = (v,dec=2) => (v!=null&&!isNaN(v)) ? parseFloat(v).toFixed(dec)+'%' : 'N/A';
 
-  document.getElementById('stock-header-section').innerHTML = `
+  setEl('stock-header-section', `
     <div class="stock-header">
       <div class="flex-between">
         <div>
           <div class="stock-name">${d.ticker}</div>
           <div class="stock-full-name">${d.companyName||d.ticker} · ${d.exchange} · ${d.sector||''}</div>
-          <div style="margin-top:4px"><span style="background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.2);border-radius:4px;color:var(--green);font-size:9px;padding:2px 7px;letter-spacing:.5px">📡 ${d.dataSource||'Yahoo Finance'}</span></div>
+          <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">
+            <span style="background:rgba(0,229,160,0.08);border:1px solid rgba(0,229,160,0.2);border-radius:4px;color:var(--green);font-size:9px;padding:2px 7px">📡 ${d.dataSource||'Yahoo Finance'}</span>
+            <span style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:4px;color:var(--accent);font-size:9px;padding:2px 7px">DATA ${Math.round((d.confidence||0)*100)}%</span>
+          </div>
         </div>
         <div id="signal-badge-top"></div>
       </div>
@@ -2199,36 +2130,35 @@ function renderOverview() {
         <div class="price-change ${isUp?'up':'down'}">${isUp?'+':''}${sym}${fmt(Math.abs(chg))} (${isUp?'+':''}${chgP.toFixed(2)}%)</div>
       </div>
       <div class="price-meta">
-        <div class="price-meta-item">OPEN<span>${fmtP(d.open)}</span></div>
-        <div class="price-meta-item">HIGH<span class="green">${fmtP(d.dayHigh)}</span></div>
-        <div class="price-meta-item">LOW<span class="red">${fmtP(d.dayLow)}</span></div>
+        <div class="price-meta-item">OPEN<span>${fP(d.open)}</span></div>
+        <div class="price-meta-item">HIGH<span class="green">${fP(d.dayHigh)}</span></div>
+        <div class="price-meta-item">LOW<span class="red">${fP(d.dayLow)}</span></div>
         <div class="price-meta-item">VOL<span>${fmtVol(d.volume)}</span></div>
-        <div class="price-meta-item">52W H<span class="green">${fmtP(d.weekHigh52)}</span></div>
-        <div class="price-meta-item">52W L<span class="red">${fmtP(d.weekLow52)}</span></div>
+        <div class="price-meta-item">52W H<span class="green">${fP(d.weekHigh52)}</span></div>
+        <div class="price-meta-item">52W L<span class="red">${fP(d.weekLow52)}</span></div>
       </div>
-    </div>`;
+    </div>`);
 
   setTimeout(() => {
     const b = document.getElementById('signal-badge-top');
     if (b) b.innerHTML = `<div class="signal-badge ${d.overallSignal}">${d.overallSignal==='BUY'?'▲':d.overallSignal==='SELL'?'▼':'◆'} ${d.overallSignal}</div>`;
   }, 50);
 
-  const fS = (v,suf='') => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(2)+suf:'N/A';
-  document.getElementById('stats-section').innerHTML = `
+  setEl('stats-section', `
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-accent-bar"></div><div class="stat-label">MARKET CAP</div><div class="stat-value" style="font-size:${String(d.marketCap||'').length>8?'13px':'16px'}">${d.marketCap||'N/A'}</div></div>
+      <div class="stat-card"><div class="stat-accent-bar"></div><div class="stat-label">MARKET CAP</div><div class="stat-value" style="font-size:${String(d.marketCap||'').length>8?'13':'16'}px">${d.marketCap||'N/A'}</div></div>
       <div class="stat-card"><div class="stat-accent-bar" style="background:var(--green)"></div><div class="stat-label">P/E RATIO</div><div class="stat-value">${fS(d.pe)}</div></div>
       <div class="stat-card"><div class="stat-accent-bar" style="background:var(--purple)"></div><div class="stat-label">EPS</div><div class="stat-value">${d.eps!=null&&d.eps!==0?sym+fS(d.eps):'N/A'}</div></div>
       <div class="stat-card"><div class="stat-accent-bar" style="background:var(--yellow)"></div><div class="stat-label">BETA</div><div class="stat-value ${d.beta!=null&&d.beta>1.5?'red':d.beta!=null&&d.beta<0.8?'green':''}">${fS(d.beta)}</div></div>
-      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--orange)"></div><div class="stat-label">DIV YIELD</div><div class="stat-value">${fS(d.dividendYield,'%')}</div></div>
+      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--orange)"></div><div class="stat-label">DIV YIELD</div><div class="stat-value">${fPct(d.dividendYield,3)}</div></div>
       <div class="stat-card"><div class="stat-accent-bar" style="background:var(--red)"></div><div class="stat-label">AVG VOL</div><div class="stat-value" style="font-size:16px">${fmtVol(d.avgVolume)}</div></div>
-    </div>`;
+    </div>`);
 
   renderPriceChart(d.priceHistory);
 
   const rsi  = d.rsi14 ?? 50;
-  const macdH= d.macdHistogram ?? 0;
-  document.getElementById('signal-section').innerHTML = `
+  const macdH = d.macdHistogram ?? 0;
+  setEl('signal-section', `
     <div class="sentiment-bar-wrap" style="margin-bottom:16px">
       <div class="flex-between">
         <div class="section-title">OVERALL SIGNAL</div>
@@ -2241,7 +2171,7 @@ function renderOverview() {
         <div style="background:rgba(0,229,160,0.07);border:1px solid rgba(0,229,160,0.15);border-radius:8px;padding:10px">
           <div style="font-size:9px;color:var(--text3);letter-spacing:1px">RSI (14)</div>
           <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;margin-top:4px;color:${rsi<30?'var(--green)':rsi>70?'var(--red)':'var(--yellow)'}">${rsi<30?'OVERSOLD':rsi>70?'OVERBOUGHT':'NEUTRAL'}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px">${rsi.toFixed?rsi.toFixed(1):rsi}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">${typeof rsi==='number'?rsi.toFixed(1):rsi}</div>
         </div>
         <div style="background:rgba(0,212,255,0.07);border:1px solid rgba(0,212,255,0.15);border-radius:8px;padding:10px">
           <div style="font-size:9px;color:var(--text3);letter-spacing:1px">MACD</div>
@@ -2249,12 +2179,12 @@ function renderOverview() {
           <div style="font-size:10px;color:var(--text3);margin-top:2px">${d.macd!=null?parseFloat(d.macd).toFixed(3):'N/A'}</div>
         </div>
         <div style="background:rgba(168,85,247,0.07);border:1px solid rgba(168,85,247,0.15);border-radius:8px;padding:10px">
-          <div style="font-size:9px;color:var(--text3);letter-spacing:1px">TREND (SMA50)</div>
+          <div style="font-size:9px;color:var(--text3);letter-spacing:1px">TREND</div>
           <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;margin-top:4px;color:${d.sma50&&d.price>d.sma50?'var(--green)':'var(--red)'}">${d.sma50&&d.price>d.sma50?'UPTREND':'DOWNTREND'}</div>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px">${d.sma50!=null?sym+parseFloat(d.sma50).toFixed(2):'N/A'}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">${d.sma50!=null?(d.currencySymbol||'₹')+parseFloat(d.sma50).toFixed(2):'N/A'}</div>
         </div>
       </div>
-    </div>`;
+    </div>`);
 }
 
 // ==================== RENDER TECHNICALS ====================
@@ -2262,66 +2192,54 @@ function renderTechnicals() {
   const d = currentData;
   if (!d) return;
   const sym = d.currencySymbol || '₹';
-  const nv  = (v,dec=2) => (v!=null&&!isNaN(v))?parseFloat(v).toFixed(dec):'N/A';
+  const nv  = (v,dec=2) => (v!=null&&!isNaN(v)) ? parseFloat(v).toFixed(dec) : 'N/A';
 
   const inds = [
-    {name:'RSI (14)',  val:nv(d.rsi14,1),
-     sig:d.rsi14==null?'N/A':d.rsi14>70?'OVERBOUGHT':d.rsi14<30?'OVERSOLD':'NEUTRAL',
-     sc: d.rsi14==null?'signal-neutral':d.rsi14>70?'signal-overbought':d.rsi14<30?'signal-buy':'signal-neutral',
-     col:d.rsi14==null?'var(--text3)':d.rsi14>70?'var(--orange)':d.rsi14<30?'var(--green)':'var(--yellow)'},
-    {name:'MACD',      val:nv(d.macd,3),
-     sig:d.macd==null?'N/A':d.macd>d.macdSignal?'BULLISH':'BEARISH',
-     sc: d.macd==null?'signal-neutral':d.macd>d.macdSignal?'signal-buy':'signal-sell',
-     col:d.macd==null?'var(--text3)':d.macd>d.macdSignal?'var(--green)':'var(--red)'},
-    {name:'SMA 50',    val:d.sma50!=null?sym+fmt(d.sma50):'N/A',
-     sig:d.sma50==null?'N/A':d.price>d.sma50?'ABOVE ▲':'BELOW ▼',
-     sc: d.sma50==null?'signal-neutral':d.price>d.sma50?'signal-buy':'signal-sell',
-     col:d.sma50==null?'var(--text3)':d.price>d.sma50?'var(--green)':'var(--red)'},
-    {name:'SMA 200',   val:d.sma200!=null?sym+fmt(d.sma200):'N/A',
-     sig:d.sma200==null?'N/A':d.price>d.sma200?'ABOVE ▲':'BELOW ▼',
-     sc: d.sma200==null?'signal-neutral':d.price>d.sma200?'signal-buy':'signal-sell',
-     col:d.sma200==null?'var(--text3)':d.price>d.sma200?'var(--green)':'var(--red)'},
-    {name:'STOCHASTIC',val:nv(d.stochastic,1),
-     sig:d.stochastic==null?'N/A':d.stochastic>80?'OVERBOUGHT':d.stochastic<20?'OVERSOLD':'NEUTRAL',
-     sc: d.stochastic==null?'signal-neutral':d.stochastic>80?'signal-overbought':d.stochastic<20?'signal-buy':'signal-neutral',
-     col:d.stochastic==null?'var(--text3)':d.stochastic>80?'var(--orange)':'var(--yellow)'},
-    {name:'ATR (14)',  val:nv(d.atr),          sig:'VOLATILITY', sc:'signal-neutral', col:'var(--purple)'},
-    {name:'BB UPPER',  val:d.bollingerUpper!=null?sym+fmt(d.bollingerUpper):'N/A',
-     sig:d.bollingerUpper==null?'N/A':d.price>d.bollingerUpper?'BREAKOUT':'IN BAND',
-     sc:'signal-neutral',col:'var(--accent)'},
-    {name:'ADX',       val:nv(d.adxStrength,1),
-     sig:d.adxStrength==null?'N/A':d.adxStrength>25?'STRONG':'WEAK',
-     sc: d.adxStrength==null?'signal-neutral':d.adxStrength>25?'signal-buy':'signal-neutral',
-     col:d.adxStrength==null?'var(--text3)':d.adxStrength>25?'var(--green)':'var(--yellow)'},
+    { name:'RSI (14)',    val:nv(d.rsi14,1),
+      sig:d.rsi14==null?'N/A':d.rsi14>70?'OVERBOUGHT':d.rsi14<30?'OVERSOLD':'NEUTRAL',
+      sc: d.rsi14==null?'signal-neutral':d.rsi14>70?'signal-overbought':d.rsi14<30?'signal-buy':'signal-neutral',
+      col:d.rsi14==null?'var(--text3)':d.rsi14>70?'var(--orange)':d.rsi14<30?'var(--green)':'var(--yellow)' },
+    { name:'MACD',        val:nv(d.macd,3),
+      sig:d.macd==null?'N/A':d.macd>d.macdSignal?'BULLISH':'BEARISH',
+      sc: d.macd==null?'signal-neutral':d.macd>d.macdSignal?'signal-buy':'signal-sell',
+      col:d.macd==null?'var(--text3)':d.macd>d.macdSignal?'var(--green)':'var(--red)' },
+    { name:'SMA 50',      val:d.sma50!=null?sym+fmt(d.sma50):'N/A',
+      sig:d.sma50==null?'N/A':d.price>d.sma50?'ABOVE ▲':'BELOW ▼',
+      sc: d.sma50==null?'signal-neutral':d.price>d.sma50?'signal-buy':'signal-sell',
+      col:d.sma50==null?'var(--text3)':d.price>d.sma50?'var(--green)':'var(--red)' },
+    { name:'SMA 200',     val:d.sma200!=null?sym+fmt(d.sma200):'N/A',
+      sig:d.sma200==null?'N/A':d.price>d.sma200?'ABOVE ▲':'BELOW ▼',
+      sc: d.sma200==null?'signal-neutral':d.price>d.sma200?'signal-buy':'signal-sell',
+      col:d.sma200==null?'var(--text3)':d.price>d.sma200?'var(--green)':'var(--red)' },
+    { name:'STOCHASTIC',  val:nv(d.stochastic,1),
+      sig:d.stochastic==null?'N/A':d.stochastic>80?'OVERBOUGHT':d.stochastic<20?'OVERSOLD':'NEUTRAL',
+      sc: d.stochastic==null?'signal-neutral':d.stochastic>80?'signal-overbought':d.stochastic<20?'signal-buy':'signal-neutral',
+      col:d.stochastic==null?'var(--text3)':d.stochastic>80?'var(--orange)':'var(--yellow)' },
+    { name:'ATR (14)',    val:nv(d.atr),   sig:'VOLATILITY', sc:'signal-neutral', col:'var(--purple)' },
+    { name:'BB UPPER',    val:d.bollingerUpper!=null?sym+fmt(d.bollingerUpper):'N/A',
+      sig:d.bollingerUpper==null?'N/A':d.price>d.bollingerUpper?'BREAKOUT':'IN BAND',
+      sc:'signal-neutral', col:'var(--accent)' },
+    { name:'ADX',         val:nv(d.adxStrength,1),
+      sig:d.adxStrength==null?'N/A':d.adxStrength>25?'STRONG':'WEAK',
+      sc: d.adxStrength==null?'signal-neutral':d.adxStrength>25?'signal-buy':'signal-neutral',
+      col:d.adxStrength==null?'var(--text3)':d.adxStrength>25?'var(--green)':'var(--yellow)' },
   ];
 
-  document.getElementById('indicators-section').innerHTML = `
+  setEl('indicators-section', `
     <div class="section-header"><div class="section-title">TECHNICAL INDICATORS</div></div>
     <div class="indicators-grid">
-      ${inds.map(i=>`<div class="indicator-card">
-        <div class="indicator-name">${i.name}</div>
-        <div class="indicator-value" style="color:${i.col}">${i.val}</div>
-        <div class="indicator-signal ${i.sc}">${i.sig}</div>
-      </div>`).join('')}
+      ${inds.map(i=>`<div class="indicator-card"><div class="indicator-name">${i.name}</div><div class="indicator-value" style="color:${i.col}">${i.val}</div><div class="indicator-signal ${i.sc}">${i.sig}</div></div>`).join('')}
     </div>
     <div class="chart-wrap" style="margin-bottom:10px">
       <div class="chart-header">
         <div class="chart-title">BOLLINGER BANDS</div>
-        <div style="font-size:10px;color:var(--text3)">
-          Upper: ${d.bollingerUpper!=null?sym+fmt(d.bollingerUpper):'N/A'} ·
-          Mid: ${d.bollingerMiddle!=null?sym+fmt(d.bollingerMiddle):'N/A'} ·
-          Lower: ${d.bollingerLower!=null?sym+fmt(d.bollingerLower):'N/A'}
-        </div>
+        <div style="font-size:10px;color:var(--text3)">Upper: ${d.bollingerUpper!=null?sym+fmt(d.bollingerUpper):'N/A'} · Mid: ${d.bollingerMiddle!=null?sym+fmt(d.bollingerMiddle):'N/A'} · Lower: ${d.bollingerLower!=null?sym+fmt(d.bollingerLower):'N/A'}</div>
       </div>
-    </div>`;
+    </div>`);
 
   renderRsiChart(d.rsiHistory);
   renderMacdChart(d.macdHistory, d.macdSignalHistory);
-
-  const at = document.getElementById('ai-technicals-section');
-  if (at && !at.querySelector('.ai-body')?.textContent?.trim()) {
-    at.innerHTML = `<div class="ai-panel"><div class="ai-header"><div class="ai-dot"></div><div class="ai-title">AI TECHNICAL COMMENTARY</div></div><div class="ai-body" style="color:var(--text3)">AI commentary loads after analysis completes.</div></div>`;
-  }
+  setEl('ai-technicals-section', '');
 }
 
 // ==================== RENDER RISK ====================
@@ -2332,45 +2250,23 @@ function renderRisk() {
   const rC  = pct<33?'var(--green)':pct<66?'var(--yellow)':'var(--red)';
   const fS  = (v,suf='',dec=2) => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(dec)+suf:'N/A';
 
-  document.getElementById('risk-section').innerHTML = `
+  setEl('risk-section', `
     <div class="risk-meter-wrap">
-      <div class="flex-between mb-8">
-        <div class="section-title">RISK ASSESSMENT</div>
-        <span class="tag">${d.riskLevel||'MODERATE'}</span>
-      </div>
+      <div class="flex-between mb-8"><div class="section-title">RISK ASSESSMENT</div><span class="tag">${d.riskLevel||'MODERATE'}</span></div>
       <div class="risk-score-big" style="color:${rC}">${pct}</div>
-      <div style="text-align:center;font-size:10px;color:var(--text3);margin-bottom:8px">RISK SCORE /100 · volatility 40% + drawdown 30% + beta 30%</div>
+      <div style="text-align:center;font-size:10px;color:var(--text3);margin-bottom:8px">RISK SCORE /100</div>
       <div class="risk-bar-track"><div class="risk-needle" style="left:${Math.min(pct,99)}%"></div></div>
       <div class="risk-labels"><span>LOW</span><span>MODERATE</span><span>HIGH</span><span>EXTREME</span></div>
     </div>
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--red)"></div>
-        <div class="stat-label">ANN. VOLATILITY</div>
-        <div class="stat-value">${fS(d.volatility30d,'%')}</div>
-        <div class="stat-sub">σ × √252</div></div>
-      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--orange)"></div>
-        <div class="stat-label">MAX DRAWDOWN</div>
-        <div class="stat-value red">${d.maxDrawdown&&d.maxDrawdown!==0?parseFloat(d.maxDrawdown).toFixed(2)+'%':'N/A'}</div>
-        <div class="stat-sub">peak-to-trough</div></div>
-      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--green)"></div>
-        <div class="stat-label">SHARPE RATIO</div>
-        <div class="stat-value ${d.sharpeRatio>1?'green':d.sharpeRatio>0?'yellow':'red'}">${fS(d.sharpeRatio)}</div>
-        <div class="stat-sub">vs 6% risk-free</div></div>
-      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--purple)"></div>
-        <div class="stat-label">VaR 95% DAILY</div>
-        <div class="stat-value red">${d.varDaily&&d.varDaily!==0?'-'+Math.abs(d.varDaily).toFixed(2)+'%':'N/A'}</div>
-        <div class="stat-sub">parametric</div></div>
-      <div class="stat-card"><div class="stat-accent-bar"></div>
-        <div class="stat-label">BETA</div>
-        <div class="stat-value ${d.beta!=null&&d.beta>1.5?'red':d.beta!=null&&d.beta<0.8?'green':''}">${fS(d.beta)}</div>
-        <div class="stat-sub">vs benchmark</div></div>
-      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--yellow)"></div>
-        <div class="stat-label">OBV TREND</div>
-        <div class="stat-value" style="font-size:13px;text-transform:uppercase;color:${d.obvTrend==='bullish'?'var(--green)':'var(--red)'}">${d.obvTrend||'N/A'}</div>
-        <div class="stat-sub">on-balance volume</div></div>
-    </div>`;
-
-  document.getElementById('ai-risk-section').innerHTML = '';
+      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--red)"></div><div class="stat-label">ANN. VOLATILITY</div><div class="stat-value">${fS(d.volatility30d,'%')}</div><div class="stat-sub">σ×√252</div></div>
+      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--orange)"></div><div class="stat-label">MAX DRAWDOWN</div><div class="stat-value red">${d.maxDrawdown&&d.maxDrawdown!==0?parseFloat(d.maxDrawdown).toFixed(2)+'%':'N/A'}</div><div class="stat-sub">peak-to-trough</div></div>
+      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--green)"></div><div class="stat-label">SHARPE RATIO</div><div class="stat-value ${d.sharpeRatio>1?'green':d.sharpeRatio>0?'yellow':'red'}">${fS(d.sharpeRatio)}</div><div class="stat-sub">vs 6% risk-free</div></div>
+      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--purple)"></div><div class="stat-label">VaR 95% DAILY</div><div class="stat-value red">${d.varDaily&&d.varDaily!==0?'-'+Math.abs(d.varDaily).toFixed(2)+'%':'N/A'}</div><div class="stat-sub">parametric</div></div>
+      <div class="stat-card"><div class="stat-accent-bar"></div><div class="stat-label">BETA</div><div class="stat-value ${d.beta!=null&&d.beta>1.5?'red':d.beta!=null&&d.beta<0.8?'green':''}">${fS(d.beta)}</div><div class="stat-sub">vs benchmark</div></div>
+      <div class="stat-card"><div class="stat-accent-bar" style="background:var(--yellow)"></div><div class="stat-label">OBV TREND</div><div class="stat-value" style="font-size:13px;text-transform:uppercase;color:${d.obvTrend==='bullish'?'var(--green)':'var(--red)'}">${d.obvTrend||'N/A'}</div><div class="stat-sub">on-balance vol</div></div>
+    </div>`);
+  setEl('ai-risk-section', '');
 }
 
 // ==================== RENDER FUNDAMENTALS ====================
@@ -2378,85 +2274,68 @@ function renderFundamentals() {
   const d = currentData;
   if (!d) return;
   const sym = d.currencySymbol || '₹';
-  const S   = (v,dec=2) => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(dec):'N/A';
-  const P   = (v,dec=2) => (v!=null&&!isNaN(v))?parseFloat(v).toFixed(dec)+'%':'N/A';
-  const Cv  = v => (v!=null&&v!==''&&v!=='–'&&v!=='N/A'&&v!=='undefined')?v:'N/A';
+  const fS  = (v,dec=2) => (v!=null&&!isNaN(v)&&v!==0)?parseFloat(v).toFixed(dec):'Data unavailable';
+  const fP  = (v,dec=2) => (v!=null&&!isNaN(v))?parseFloat(v).toFixed(dec)+'%':'Data unavailable';
+  const fCv = v => (v!=null&&v!==''&&v!=='–'&&v!=='N/A'&&v!=='undefined')?v:'Data unavailable';
   const clr = (v,g,b) => (v!=null&&!isNaN(v))?(v>g?'green':v<b?'red':'yellow'):'';
 
-  document.getElementById('fundamentals-section').innerHTML = `
-    <div style="background:rgba(255,217,61,0.06);border:1px solid rgba(255,217,61,0.15);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:10px;color:var(--yellow)">
-      ℹ️ Fundamental data from Yahoo Finance quoteSummary. Some fields may be unavailable for this stock.
+  const conf = Math.round((d.confidence||0)*100);
+  const confColor = conf>=70?'var(--green)':conf>=40?'var(--yellow)':'var(--red)';
+
+  setEl('fundamentals-section', `
+    <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.15);border-radius:8px;padding:9px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:10px;color:var(--text3)">Data from Yahoo Finance quoteSummary + derived calculations</div>
+      <div style="font-size:11px;font-weight:700;color:${confColor}">DATA ${conf}%</div>
     </div>
 
     <div class="section-title mb-8">VALUATION</div>
     <div class="info-grid">
-      <div class="info-item"><div class="info-label">P/E (TTM)</div><div class="info-value">${S(d.pe)}</div></div>
-      <div class="info-item"><div class="info-label">FWD P/E</div><div class="info-value">${S(d.forwardPE)}</div></div>
-      <div class="info-item"><div class="info-label">P/B RATIO</div><div class="info-value">${S(d.pb)}</div></div>
-      <div class="info-item"><div class="info-label">P/S RATIO</div><div class="info-value">${S(d.ps)}</div></div>
-      <div class="info-item"><div class="info-label">PEG RATIO</div><div class="info-value">${S(d.peg)}</div></div>
-      <div class="info-item"><div class="info-label">EPS (TTM)</div><div class="info-value">${d.eps!=null&&d.eps!==0?sym+S(d.eps):'N/A'}</div></div>
-      <div class="info-item"><div class="info-label">DIV YIELD</div><div class="info-value">${P(d.dividendYield,3)}</div></div>
-      <div class="info-item"><div class="info-label">BETA</div><div class="info-value">${S(d.beta)}</div></div>
+      <div class="info-item"><div class="info-label">P/E (TTM)</div><div class="info-value">${fS(d.pe)}</div></div>
+      <div class="info-item"><div class="info-label">FWD P/E</div><div class="info-value">${fS(d.forwardPE)}</div></div>
+      <div class="info-item"><div class="info-label">P/B RATIO</div><div class="info-value">${fS(d.pb)}</div></div>
+      <div class="info-item"><div class="info-label">P/S RATIO</div><div class="info-value">${fS(d.ps)}</div></div>
+      <div class="info-item"><div class="info-label">PEG RATIO</div><div class="info-value">${fS(d.peg)}</div></div>
+      <div class="info-item"><div class="info-label">EPS (TTM)</div><div class="info-value">${d.eps!=null&&d.eps!==0?sym+fS(d.eps):'Data unavailable'}</div></div>
+      <div class="info-item"><div class="info-label">DIV YIELD</div><div class="info-value">${fP(d.dividendYield,3)}</div></div>
+      <div class="info-item"><div class="info-label">MKT CAP</div><div class="info-value" style="font-size:13px">${fCv(d.marketCap)}</div></div>
     </div>
 
     <div class="section-title mb-8 mt-12">PROFITABILITY</div>
     <div class="info-grid">
-      <div class="info-item"><div class="info-label">ROE</div><div class="info-value ${clr(d.roe,15,0)}">${P(d.roe)}</div></div>
-      <div class="info-item"><div class="info-label">ROA</div><div class="info-value">${P(d.roa)}</div></div>
-      <div class="info-item"><div class="info-label">GROSS MARGIN</div><div class="info-value">${P(d.grossMargin)}</div></div>
-      <div class="info-item"><div class="info-label">OP MARGIN</div><div class="info-value">${P(d.operatingMargin)}</div></div>
-      <div class="info-item"><div class="info-label">NET MARGIN</div><div class="info-value">${P(d.profitMargin)}</div></div>
-      <div class="info-item"><div class="info-label">REV GROWTH</div><div class="info-value ${clr(d.revenueGrowth,10,0)}">${P(d.revenueGrowth)}</div></div>
-      <div class="info-item"><div class="info-label">EARN GROWTH</div><div class="info-value ${clr(d.earningsGrowth,10,0)}">${P(d.earningsGrowth)}</div></div>
-      <div class="info-item"><div class="info-label">MKT CAP</div><div class="info-value" style="font-size:13px">${Cv(d.marketCap)}</div></div>
+      <div class="info-item"><div class="info-label">ROE</div><div class="info-value ${clr(d.roe,15,0)}">${fP(d.roe)}</div></div>
+      <div class="info-item"><div class="info-label">ROA</div><div class="info-value">${fP(d.roa)}</div></div>
+      <div class="info-item"><div class="info-label">GROSS MARGIN</div><div class="info-value">${fP(d.grossMargin)}</div></div>
+      <div class="info-item"><div class="info-label">OP MARGIN</div><div class="info-value">${fP(d.operatingMargin)}</div></div>
+      <div class="info-item"><div class="info-label">NET MARGIN</div><div class="info-value">${fP(d.profitMargin)}</div></div>
+      <div class="info-item"><div class="info-label">REV GROWTH</div><div class="info-value ${clr(d.revenueGrowth,10,0)}">${fP(d.revenueGrowth)}</div></div>
+      <div class="info-item"><div class="info-label">EARN GROWTH</div><div class="info-value ${clr(d.earningsGrowth,10,0)}">${fP(d.earningsGrowth)}</div></div>
+      <div class="info-item"><div class="info-label">REVENUE</div><div class="info-value">${fCv(d.totalRevenue)}</div></div>
     </div>
 
     <div class="section-title mb-8 mt-12">FINANCIAL HEALTH</div>
     <div class="info-grid">
-      <div class="info-item"><div class="info-label">DEBT/EQUITY</div><div class="info-value ${d.debtToEquity!=null&&d.debtToEquity>2?'red':d.debtToEquity!=null&&d.debtToEquity<1?'green':''}">${S(d.debtToEquity)}</div></div>
-      <div class="info-item"><div class="info-label">CURRENT RATIO</div><div class="info-value ${d.currentRatio!=null&&d.currentRatio>1.5?'green':d.currentRatio!=null&&d.currentRatio<1?'red':''}">${S(d.currentRatio)}</div></div>
-      <div class="info-item"><div class="info-label">QUICK RATIO</div><div class="info-value">${S(d.quickRatio)}</div></div>
-      <div class="info-item"><div class="info-label">VOLATILITY</div><div class="info-value">${P(d.volatility30d)}</div></div>
-      <div class="info-item"><div class="info-label">SHARPE</div><div class="info-value ${d.sharpeRatio>1?'green':d.sharpeRatio>0?'yellow':'red'}">${S(d.sharpeRatio)}</div></div>
-      <div class="info-item"><div class="info-label">MAX DRAWDOWN</div><div class="info-value red">${d.maxDrawdown&&d.maxDrawdown!==0?parseFloat(d.maxDrawdown).toFixed(2)+'%':'N/A'}</div></div>
+      <div class="info-item"><div class="info-label">DEBT/EQUITY</div><div class="info-value ${d.debtToEquity!=null&&d.debtToEquity>2?'red':d.debtToEquity!=null&&d.debtToEquity<1?'green':''}">${fS(d.debtToEquity)}</div></div>
+      <div class="info-item"><div class="info-label">CURRENT RATIO</div><div class="info-value ${d.currentRatio!=null&&d.currentRatio>1.5?'green':d.currentRatio!=null&&d.currentRatio<1?'red':''}">${fS(d.currentRatio)}</div></div>
+      <div class="info-item"><div class="info-label">VOLATILITY</div><div class="info-value">${fP(d.volatility30d)}</div></div>
+      <div class="info-item"><div class="info-label">SHARPE</div><div class="info-value ${d.sharpeRatio>1?'green':d.sharpeRatio>0?'yellow':'red'}">${fS(d.sharpeRatio)}</div></div>
+      <div class="info-item"><div class="info-label">MAX DRAWDOWN</div><div class="info-value red">${d.maxDrawdown&&d.maxDrawdown!==0?parseFloat(d.maxDrawdown).toFixed(2)+'%':'Data unavailable'}</div></div>
+      <div class="info-item"><div class="info-label">FREE CASHFLOW</div><div class="info-value">${fCv(d.freeCashflow)}</div></div>
     </div>
 
     <div class="section-title mb-8 mt-12">COMPANY PROFILE</div>
     <div class="stat-card" style="margin-bottom:16px">
-      <div style="font-size:12px;color:var(--text2);line-height:1.7">${d.description||'Description not available.'}</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.7">${d.description||'Description not available from data provider.'}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-        <div><div class="stat-label">SECTOR</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${Cv(d.sector)}</div></div>
-        <div><div class="stat-label">INDUSTRY</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${Cv(d.industry)}</div></div>
-        <div><div class="stat-label">EMPLOYEES</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${Cv(d.employees)}</div></div>
-        <div><div class="stat-label">WEBSITE</div><div style="font-size:12px;margin-top:3px">${d.website?`<a href="https://${d.website}" target="_blank" style="color:var(--accent);text-decoration:none">${d.website}</a>`:'N/A'}</div></div>
-        <div><div class="stat-label">CEO</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${Cv(d.ceo)}</div></div>
-        <div><div class="stat-label">FOUNDED</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${Cv(d.founded)}</div></div>
+        <div><div class="stat-label">SECTOR</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${fCv(d.sector)}</div></div>
+        <div><div class="stat-label">INDUSTRY</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${fCv(d.industry)}</div></div>
+        <div><div class="stat-label">EMPLOYEES</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${fCv(d.employees)}</div></div>
+        <div><div class="stat-label">WEBSITE</div><div style="font-size:12px;margin-top:3px">${d.website&&d.website!=='N/A'?`<a href="https://${d.website}" target="_blank" style="color:var(--accent);text-decoration:none">${d.website}</a>`:'Data unavailable'}</div></div>
+        <div><div class="stat-label">CEO</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${fCv(d.ceo)}</div></div>
+        <div><div class="stat-label">FOUNDED</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${fCv(d.founded)}</div></div>
       </div>
-    </div>`;
+    </div>`);
 
-  const validPeers = (d.peers||[]).filter(p => p.ticker && p.ticker !== '–');
-  if (validPeers.length) {
-    document.getElementById('compare-section').innerHTML = `
-      <div class="section-title mb-8">PEER COMPARISON</div>
-      <div class="compare-panel">
-        <div class="peer-grid">
-          <div class="peer-card selected">
-            <div class="peer-ticker" style="color:var(--accent)">${d.ticker}</div>
-            <div class="peer-price">${sym}${fmt(d.price)}</div>
-            <div class="peer-change" style="color:var(--green)">CURRENT</div>
-          </div>
-          ${validPeers.slice(0,4).map(p=>`
-            <div class="peer-card" onclick="quickAnalyze('${p.ticker}')">
-              <div class="peer-ticker">${p.ticker}</div>
-              <div class="peer-price">${p.price>0?sym+fmt(p.price):'N/A'}</div>
-              <div class="peer-change ${p.change>=0?'up':'down'}">${p.change!==0?(p.change>=0?'+':'')+p.change+'%':'—'}</div>
-            </div>`).join('')}
-        </div>
-      </div>`;
-  } else {
-    document.getElementById('compare-section').innerHTML = '';
-  }
+  setEl('compare-section', '');
 }
 
 // ==================== RENDER SENTIMENT ====================
@@ -2465,7 +2344,9 @@ function renderSentiment() {
   if (!d) return;
   const s   = d.sentiment || { positive:40, neutral:35, negative:25 };
   const scr = d.sentimentScore ?? 50;
-  document.getElementById('sentiment-section').innerHTML = `
+  const headlines = (d.newsHeadlines||[]).filter(h => h&&h.length>4);
+
+  setEl('sentiment-section', `
     <div class="sentiment-bar-wrap">
       <div class="flex-between mb-8">
         <div class="section-title">NEWS SENTIMENT</div>
@@ -2483,90 +2364,85 @@ function renderSentiment() {
       </div>
     </div>
     <div class="section-title mb-8 mt-12">RECENT HEADLINES</div>
-    ${(d.newsHeadlines||[]).filter(h=>h&&h.length>4).map((h,i)=>`
+    ${headlines.length ? headlines.map((h,i) => `
       <div class="watchlist-item" style="cursor:default">
         <div style="font-size:11px;color:var(--text2);line-height:1.5">${h}</div>
         <div class="wl-alert-badge" style="${i===0?'background:rgba(0,229,160,0.1);border-color:rgba(0,229,160,0.2);color:var(--green)':i===2?'background:rgba(255,71,87,0.1);border-color:rgba(255,71,87,0.2);color:var(--red)':''}">${i===0?'BULLISH':i===2?'BEARISH':'NEUTRAL'}</div>
-      </div>`).join('') || '<div style="color:var(--text3);font-size:11px;padding:8px">AI headlines load after analysis completes.</div>'}`;
-
-  document.getElementById('ai-sentiment-section').innerHTML = '';
+      </div>`).join('')
+    : '<div style="color:var(--text3);font-size:11px;padding:8px">Headlines load after AI analysis completes.</div>'}`);
+  setEl('ai-sentiment-section', '');
 }
 
-// ==================== EXPORT & PDF ====================
-function exportAnalysis(historyIndex) {
+// ==================== EXPORT / PDF ====================
+function exportAnalysis(histIdx) {
   let d;
-  if (historyIndex !== undefined) {
+  if (histIdx !== undefined) {
     const h = JSON.parse(localStorage.getItem('ss_history')||'[]');
-    d = h[historyIndex]?.snapshot;
-  } else {
-    d = currentData;
-  }
+    d = h[histIdx]?.snapshot;
+  } else { d = currentData; }
   if (!d) { showToast('⚠️ No data to export'); return; }
   showToast('📊 Building report...');
-  // Capture chart before async
   let chartImg = '';
   try {
     const cv = document.getElementById('price-chart');
     if (cv && cv.width > 0) chartImg = cv.toDataURL('image/png');
   } catch(e) {}
-  setTimeout(() => _openPDFWindow(d, chartImg), 250);
+  setTimeout(() => _openPDF(d, chartImg), 250);
 }
 
-function _openPDFWindow(d, chartImg) {
+function _openPDF(d, chartImg) {
   const sym    = d.currencySymbol || '₹';
   const now    = new Date();
   const dateS  = now.toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
   const rawChg = (d.price&&d.previousClose&&d.previousClose>0)?((d.price-d.previousClose)/d.previousClose*100):0;
   const chg    = rawChg.toFixed(2);
   const isUp   = rawChg >= 0;
-  const sig    = d.overallSignal || 'HOLD';
+  const sig    = d.overallSignal||'HOLD';
   const sigC   = sig==='BUY'?'#00c87a':sig==='SELL'?'#e63946':'#e67e00';
   const sigBg  = sig==='BUY'?'#e8fff5':sig==='SELL'?'#fff0f0':'#fff8e8';
+  const rs     = Math.min(d.riskScore||50,100);
+  const rsC    = rs<33?'#00c87a':rs<66?'#e67e00':'#e63946';
+  const sPos   = d.sentiment?.positive??40;
+  const sNeu   = d.sentiment?.neutral ??35;
+  const sNeg   = d.sentiment?.negative??25;
+  const sScr   = d.sentimentScore??50;
+  const mc     = d.monteCarlo;
+  const conf   = Math.round((d.confidence||0)*100);
 
-  const nv  = (v,dec=2) => (v!=null&&!isNaN(parseFloat(v))&&parseFloat(v)!==0)?parseFloat(v).toFixed(dec):'N/A';
-  const pv  = (v,dec=2) => (v!=null&&!isNaN(parseFloat(v)))?parseFloat(v).toFixed(dec)+'%':'N/A';
-  const cv  = v => (v!=null&&v!==''&&v!=='–'&&v!=='N/A')?v:'N/A';
-  const cpc = (v,g,b) => {const n=parseFloat(v);return !isNaN(n)?n>g?'#00a86b':n<b?'#e63946':'#e67e00':'#333';};
+  const nv  = (v,dec=2) => (v!=null&&!isNaN(parseFloat(v))&&parseFloat(v)!==0)?parseFloat(v).toFixed(dec):'—';
+  const pv  = (v,dec=2) => (v!=null&&!isNaN(parseFloat(v)))?parseFloat(v).toFixed(dec)+'%':'—';
+  const cv2 = v => (v!=null&&v!==''&&v!=='–'&&v!=='N/A'&&v!=='undefined'&&v!=='Data unavailable')?v:'—';
+  const cpc = (v,g,b) => { const n=parseFloat(v); return !isNaN(n)?n>g?'#00a86b':n<b?'#e63946':'#e67e00':'#333'; };
 
-  const rs   = Math.min(d.riskScore||50,100);
-  const rsC  = rs<33?'#00c87a':rs<66?'#e67e00':'#e63946';
-  const sPos = d.sentiment?.positive ?? 40;
-  const sNeu = d.sentiment?.neutral  ?? 35;
-  const sNeg = d.sentiment?.negative ?? 25;
-  const sScr = d.sentimentScore ?? 50;
-  const mc   = d.monteCarlo;
-
-  // Get AI text from DOM
-  const aiText = document.getElementById('ai-overview-section')?.querySelector('.ai-body')?.innerText?.trim() || '';
-
-  const newsHTML = (d.newsHeadlines||[]).filter(h=>h&&h.length>5&&h!=='Fetching news...')
+  const aiText = document.getElementById('ai-overview-section')?.querySelector('.ai-body')?.innerText?.trim()||'';
+  const newsHTML = (d.newsHeadlines||[]).filter(h=>h&&h.length>5)
     .map((h,i)=>`<div style="display:flex;gap:6px;padding:3px 0;border-bottom:1px solid #f5f5f5;font-size:10px"><span style="color:${i===0?'#00c87a':i===1?'#e67e00':'#e63946'}">●</span><span>${h}</span></div>`).join('');
 
   const mcHTML = mc ? `
   <div class="sec">
     <div class="sec-title">📉 MONTE CARLO SIMULATION</div>
-    <div style="font-size:8px;color:#888;margin-bottom:8px">${mc.paths.toLocaleString()} GBM paths · ${mc.days}D horizon · ${mc.historyDays} days history · Itô's lemma corrected</div>
+    <div style="font-size:8px;color:#888;margin-bottom:8px">${mc.paths.toLocaleString()} GBM paths · ${mc.days}D · ${mc.historyDays} days history · Itô corrected · Data confidence ${conf}%</div>
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:8px">
       ${[
-        {l:'BEAR 5%',p:mc.bear,c:mc.bearPct,bg:'#fff5f5',cl:'#e63946'},
-        {l:'Q25',    p:mc.q25, c:mc.q25Pct, bg:'#fff8f0',cl:'#e67e00'},
-        {l:'MEDIAN', p:mc.base,c:mc.basePct, bg:'#f0f4ff',cl:'#1a73e8'},
-        {l:'Q75',    p:mc.q75, c:mc.q75Pct, bg:'#f5fff5',cl:'#2e7d32'},
-        {l:'BULL 95%',p:mc.bull,c:mc.bullPct,bg:'#f0fff8',cl:'#00a86b'},
+        {l:'BEAR 5%', p:mc.bear,c:mc.bearPct,    bg:'#fff5f5',cl:'#e63946'},
+        {l:'Q25',     p:mc.q25, c:mc.q25Pct,     bg:'#fff8f0',cl:'#e67e00'},
+        {l:'MEDIAN',  p:mc.base,c:mc.basePct,     bg:'#f0f4ff',cl:'#1a73e8'},
+        {l:'Q75',     p:mc.q75, c:mc.q75Pct,     bg:'#f5fff5',cl:'#2e7d32'},
+        {l:'BULL 95%',p:mc.bull,c:mc.bullPct,    bg:'#f0fff8',cl:'#00a86b'},
       ].map(s=>`<div style="background:${s.bg};border-radius:5px;padding:7px;text-align:center;border:1px solid #e8ecf5">
         <div style="font-size:7px;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:2px">${s.l}</div>
-        <div style="font-size:13px;font-weight:800;color:#1a1a2e">${sym}${s.p??'N/A'}</div>
-        <div style="font-size:9px;font-weight:700;color:${s.cl}">${s.c!=null?(s.c>=0?'+':'')+s.c+'%':'N/A'}</div>
+        <div style="font-size:13px;font-weight:800;color:#1a1a2e">${sym}${s.p??'—'}</div>
+        <div style="font-size:9px;font-weight:700;color:${s.cl}">${s.c!=null?(s.c>=0?'+':'')+s.c+'%':'—'}</div>
       </div>`).join('')}
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:1px solid #e8ecf5;border-radius:5px;overflow:hidden">
       ${[
-        {l:'Expected',v:sym+(mc.expected??'N/A')+' ('+((mc.expectedReturn??0)>=0?'+':'')+(mc.expectedReturn??'N/A')+'%)',c:mc.expectedReturn>=0?'#00a86b':'#e63946'},
-        {l:'Prob Upside',v:mc.probUp+'%',c:mc.probUp>50?'#00a86b':'#e63946'},
-        {l:'MC VaR (5%)',v:(mc.mcVaR??'N/A')+'%',c:'#e63946'},
-        {l:'Annual Vol',v:mc.annualVol+'%',c:'#e67e00'},
-        {l:'Daily σ',v:mc.dailyStd+'%',c:'#333'},
-        {l:'Drift/Day',v:mc.drift+'%',c:'#333'},
+        {l:'Expected',    v:sym+(mc.expected??'—')+' ('+(mc.expectedReturn>=0?'+':'')+mc.expectedReturn+'%)', c:mc.expectedReturn>=0?'#00a86b':'#e63946'},
+        {l:'Prob Upside', v:mc.probUp+'%', c:mc.probUp>50?'#00a86b':'#e63946'},
+        {l:'MC VaR (5%)', v:(mc.mcVaR??'—')+'%', c:'#e63946'},
+        {l:'Annual Vol',  v:mc.annualVol+'%', c:'#e67e00'},
+        {l:'Daily σ',     v:mc.dailyStd+'%', c:'#333'},
+        {l:'Drift/Day',   v:mc.drift+'%', c:'#333'},
       ].map((m,i)=>`<div style="padding:6px 8px;${i%3!==2?'border-right:1px solid #e8ecf5':''};${i>=3?'border-top:1px solid #e8ecf5':''};text-align:center">
         <div style="font-size:7px;color:#888;text-transform:uppercase;margin-bottom:2px">${m.l}</div>
         <div style="font-size:11px;font-weight:700;color:${m.c}">${m.v}</div>
@@ -2591,7 +2467,6 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1a1a2e;backgr
 .pbig{font-size:26px;font-weight:800;color:${isUp?'#00e5a0':'#ff4757'}}
 .pchg{font-size:12px;font-weight:700;padding:3px 8px;border-radius:4px;background:${isUp?'rgba(0,229,160,.15)':'rgba(255,71,87,.15)'};color:${isUp?'#00e5a0':'#ff4757'}}
 .sbadge{font-size:11px;font-weight:800;padding:3px 12px;border-radius:5px;background:${sigBg};color:${sigC};letter-spacing:.8px;border:1px solid ${sigC}40}
-.src{font-size:8px;color:#4a6080;margin-top:5px}
 .sec{padding:12px 26px;border-bottom:1px solid #eef0f6}
 .sec:last-child{border-bottom:none}
 .sec-title{font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#1a1a2e;margin-bottom:9px;padding-bottom:4px;border-bottom:2px solid #e8ecf5}
@@ -2615,7 +2490,6 @@ tr:last-child td{border-bottom:none}
 .gauge{height:7px;border-radius:4px;background:linear-gradient(90deg,#00c87a 0%,#ffd93d 45%,#ff6b35 70%,#e63946 100%);position:relative;margin:4px 0}
 .gpin{position:absolute;top:-3px;width:3px;height:13px;background:#1a1a2e;border-radius:2px;transform:translateX(-50%);left:${rs}%}
 .sbar{display:flex;height:7px;border-radius:4px;overflow:hidden;margin:5px 0}
-.sp{background:#00c87a}.sn{background:#ffd93d}.sg{background:#e63946}
 .aib{background:#f8f9fc;border:1px solid #e8ecf5;border-radius:5px;padding:9px 11px;font-size:10px;color:#333;line-height:1.65;white-space:pre-wrap;word-wrap:break-word}
 .foot{padding:10px 26px;background:#f8f9fc;border-top:2px solid #e8ecf5;display:flex;justify-content:space-between;align-items:center}
 .disc{font-size:8px;color:#aaa;max-width:450px;line-height:1.5}
@@ -2624,45 +2498,40 @@ tr:last-child td{border-bottom:none}
 .print-btns{position:fixed;bottom:16px;right:16px;display:flex;gap:8px;z-index:999}
 .btn-p{background:#1a73e8;color:#fff;border:none;padding:9px 16px;border-radius:6px;cursor:pointer;font-weight:700;font-size:12px}
 .btn-c{background:#f0f0f0;color:#333;border:none;padding:9px 12px;border-radius:6px;cursor:pointer}
-@media print{
-  body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  @page{size:A4;margin:10mm 8mm}
-  .page{width:100%}
-  .print-btns{display:none!important}
-}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{size:A4;margin:10mm 8mm}.page{width:100%}.print-btns{display:none!important}}
 </style></head><body>
 <div class="page">
 <div class="hdr">
   <div class="hdr-top">
     <div><div class="brand">StockSage Pro</div><div class="brand-sub">INSTITUTIONAL RESEARCH REPORT</div></div>
-    <div class="meta"><div>${dateS}</div><div>${cv(d.dataSource)}</div><div>${d.exchange||''} · ${d.currencyCode||'INR'}</div></div>
+    <div class="meta"><div>${dateS}</div><div>${cv2(d.dataSource)}</div><div>${d.exchange||''} · Data ${conf}%</div></div>
   </div>
   <div class="tname">${d.ticker} — ${d.companyName||d.ticker}</div>
-  <div class="tsub">${cv(d.sector)}${d.industry?' · '+cv(d.industry):''}</div>
+  <div class="tsub">${cv2(d.sector)}${d.industry&&d.industry!=='N/A'?' · '+cv2(d.industry):''}</div>
   <div class="prow">
     <div class="pbig">${sym}${d.price}</div>
     <div class="pchg">${isUp?'+':''}${chg}%</div>
     <div class="sbadge">${sig==='BUY'?'▲':sig==='SELL'?'▼':'◆'} ${sig}</div>
   </div>
-  <div class="src">Prev Close: ${sym}${d.previousClose||'N/A'} · As of ${d.priceDate||dateS}</div>
+  <div style="font-size:8px;color:#4a6080;margin-top:5px">Prev Close: ${sym}${d.previousClose||'—'} · As of ${d.priceDate||dateS}</div>
 </div>
 
 <div class="sec">
   <div class="sec-title">📊 Price Snapshot</div>
-  <div class="g6">
-    <div class="card"><div class="cl">OPEN</div><div class="cv">${sym}${d.open||'N/A'}</div></div>
-    <div class="card"><div class="cl">HIGH</div><div class="cv pos">${sym}${d.dayHigh||'N/A'}</div></div>
-    <div class="card"><div class="cl">LOW</div><div class="cv neg">${sym}${d.dayLow||'N/A'}</div></div>
-    <div class="card"><div class="cl">PREV</div><div class="cv">${sym}${d.previousClose||'N/A'}</div></div>
-    <div class="card"><div class="cl">52W H</div><div class="cv pos">${sym}${d.weekHigh52||'N/A'}</div></div>
-    <div class="card"><div class="cl">52W L</div><div class="cv neg">${sym}${d.weekLow52||'N/A'}</div></div>
+  <div class="g6" style="margin-bottom:5px">
+    <div class="card"><div class="cl">OPEN</div><div class="cv">${sym}${d.open||'—'}</div></div>
+    <div class="card"><div class="cl">HIGH</div><div class="cv pos">${sym}${d.dayHigh||'—'}</div></div>
+    <div class="card"><div class="cl">LOW</div><div class="cv neg">${sym}${d.dayLow||'—'}</div></div>
+    <div class="card"><div class="cl">PREV</div><div class="cv">${sym}${d.previousClose||'—'}</div></div>
+    <div class="card"><div class="cl">52W H</div><div class="cv pos">${sym}${d.weekHigh52||'—'}</div></div>
+    <div class="card"><div class="cl">52W L</div><div class="cv neg">${sym}${d.weekLow52||'—'}</div></div>
   </div>
-  <div class="g3">
+  <div class="g3" style="margin-bottom:8px">
     <div class="card"><div class="cl">VOLUME</div><div class="cv" style="font-size:11px">${fmtVol(d.volume)}</div></div>
     <div class="card"><div class="cl">AVG VOL</div><div class="cv" style="font-size:11px">${fmtVol(d.avgVolume)}</div></div>
-    <div class="card"><div class="cl">MKT CAP</div><div class="cv" style="font-size:11px">${cv(d.marketCap)}</div></div>
+    <div class="card"><div class="cl">MKT CAP</div><div class="cv" style="font-size:11px">${cv2(d.marketCap)}</div></div>
   </div>
-  ${chartImg?`<img class="chart-img" src="${chartImg}" alt="Price chart">`:`<div class="chart-ph">📈 Price chart</div>`}
+  ${chartImg?`<img class="chart-img" src="${chartImg}" alt="Price chart">`:`<div class="chart-ph">📈 Price chart (open app to capture)</div>`}
 </div>
 
 <div class="sec">
@@ -2681,15 +2550,14 @@ tr:last-child td{border-bottom:none}
         <tr><td>ATR (14)</td><td colspan="2">${nv(d.atr)}</td></tr>
         <tr><td>ADX</td><td>${nv(d.adxStrength,1)}</td><td class="${d.adxStrength>25?'pos':'neu'}">${d.adxStrength>25?'STRONG':'WEAK'}</td></tr>
         <tr><td>Stochastic</td><td>${nv(d.stochastic,1)}</td><td class="${d.stochastic<20?'pos':d.stochastic>80?'neg':'neu'}">${d.stochastic<20?'OVERSOLD':d.stochastic>80?'OVERBOUGHT':'NEUTRAL'}</td></tr>
-        <tr><td>OBV</td><td colspan="2" class="${d.obvTrend==='bullish'?'pos':'neg'}">${(d.obvTrend||'N/A').toUpperCase()}</td></tr>
       </table>
     </div>
     <div>
-      <div class="col-t">Risk Metrics</div>
+      <div class="col-t">Risk Assessment</div>
       <div class="rrow">
-        <div class="rbig">${d.riskScore||'N/A'}</div>
+        <div class="rbig">${d.riskScore||'—'}</div>
         <div style="flex:1">
-          <div style="font-size:9px;font-weight:700;color:${rsC};letter-spacing:1px">${d.riskLevel||'N/A'} RISK</div>
+          <div style="font-size:9px;font-weight:700;color:${rsC};letter-spacing:1px">${d.riskLevel||'—'} RISK</div>
           <div class="gauge"><div class="gpin"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:7px;color:#aaa"><span>LOW</span><span>MOD</span><span>HIGH</span><span>EXT</span></div>
         </div>
@@ -2697,11 +2565,10 @@ tr:last-child td{border-bottom:none}
       <table>
         <tr><th>Metric</th><th>Value</th></tr>
         <tr><td>Vol (Ann.)</td><td class="${d.volatility30d>30?'neg':d.volatility30d>15?'neu':'pos'}">${pv(d.volatility30d)}</td></tr>
-        <tr><td>Max Drawdown</td><td class="neg">${d.maxDrawdown&&d.maxDrawdown!==0?parseFloat(d.maxDrawdown).toFixed(2)+'%':'N/A'}</td></tr>
+        <tr><td>Max Drawdown</td><td class="neg">${d.maxDrawdown&&d.maxDrawdown!==0?parseFloat(d.maxDrawdown).toFixed(2)+'%':'—'}</td></tr>
         <tr><td>Sharpe Ratio</td><td class="${d.sharpeRatio>1?'pos':d.sharpeRatio>0?'neu':'neg'}">${nv(d.sharpeRatio)}</td></tr>
-        <tr><td>VaR 95%</td><td class="neg">${d.varDaily&&d.varDaily!==0?'-'+Math.abs(d.varDaily).toFixed(2)+'%':'N/A'}</td></tr>
+        <tr><td>VaR 95%</td><td class="neg">${d.varDaily&&d.varDaily!==0?'-'+Math.abs(d.varDaily).toFixed(2)+'%':'—'}</td></tr>
         <tr><td>Beta</td><td>${nv(d.beta)}</td></tr>
-        <tr><td>OBV Trend</td><td class="${d.obvTrend==='bullish'?'pos':'neg'}">${(d.obvTrend||'N/A').toUpperCase()}</td></tr>
       </table>
     </div>
   </div>
@@ -2718,9 +2585,8 @@ tr:last-child td{border-bottom:none}
         <tr><td>Forward P/E</td><td>${nv(d.forwardPE)}</td></tr>
         <tr><td>P/B</td><td>${nv(d.pb)}</td></tr>
         <tr><td>P/S</td><td>${nv(d.ps)}</td></tr>
-        <tr><td>EPS</td><td>${d.eps!=null&&d.eps!==0?sym+nv(d.eps):'N/A'}</td></tr>
+        <tr><td>EPS</td><td>${d.eps!=null&&d.eps!==0?sym+nv(d.eps):'—'}</td></tr>
         <tr><td>Div Yield</td><td>${pv(d.dividendYield,3)}</td></tr>
-        <tr><td>Beta</td><td>${nv(d.beta)}</td></tr>
       </table>
     </div>
     <div>
@@ -2731,9 +2597,8 @@ tr:last-child td{border-bottom:none}
         <tr><td>ROA</td><td>${pv(d.roa)}</td></tr>
         <tr><td>Gross Margin</td><td>${pv(d.grossMargin)}</td></tr>
         <tr><td>Op. Margin</td><td>${pv(d.operatingMargin)}</td></tr>
-        <tr><td>D/E Ratio</td><td style="color:${cpc(d.debtToEquity,0,2)};font-weight:${d.debtToEquity!=null?'700':'400'}">${nv(d.debtToEquity)}</td></tr>
-        <tr><td>Current Ratio</td><td style="color:${cpc(d.currentRatio,1.5,1)};font-weight:${d.currentRatio!=null?'700':'400'}">${nv(d.currentRatio)}</td></tr>
-        <tr><td>Rev Growth</td><td style="color:${cpc(d.revenueGrowth,0,-100)};font-weight:${d.revenueGrowth!=null?'700':'400'}">${pv(d.revenueGrowth)}</td></tr>
+        <tr><td>D/E Ratio</td><td style="color:${cpc(d.debtToEquity,0,2)}">${nv(d.debtToEquity)}</td></tr>
+        <tr><td>Rev Growth</td><td style="color:${cpc(d.revenueGrowth,0,-100)}">${pv(d.revenueGrowth)}</td></tr>
       </table>
     </div>
   </div>
@@ -2746,36 +2611,34 @@ ${mcHTML}
   <div class="g2">
     <div>
       <div style="font-size:20px;font-weight:800;color:${sScr>60?'#00a86b':sScr<40?'#e63946':'#e67e00'};margin-bottom:5px">${sScr}/100</div>
-      <div class="sbar"><div class="sp" style="width:${sPos}%"></div><div class="sn" style="width:${sNeu}%"></div><div class="sg" style="width:${sNeg}%"></div></div>
+      <div class="sbar"><div style="flex:${sPos};background:#00c87a"></div><div style="flex:${sNeu};background:#ffd93d"></div><div style="flex:${sNeg};background:#e63946"></div></div>
       <div style="display:flex;gap:10px;font-size:8px;color:#666">
-        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#00c87a;margin-right:2px;vertical-align:middle"></span>Pos ${sPos}%</span>
-        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#ffd93d;margin-right:2px;vertical-align:middle"></span>Neu ${sNeu}%</span>
-        <span><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#e63946;margin-right:2px;vertical-align:middle"></span>Neg ${sNeg}%</span>
+        <span>● Pos ${sPos}%</span><span>● Neu ${sNeu}%</span><span>● Neg ${sNeg}%</span>
       </div>
     </div>
-    <div>${newsHTML||'<div style="color:#aaa;font-size:10px">No headlines available</div>'}</div>
+    <div>${newsHTML||'<div style="color:#aaa;font-size:10px">No headlines — run AI analysis first</div>'}</div>
   </div>
 </div>
 
 ${aiText&&aiText.length>30?`
 <div class="sec">
   <div class="sec-title">🤖 AI Research Analysis</div>
-  <div class="aib">${aiText.replace(/</g,'&lt;').replace(/>/g,'&gt;').slice(0,1500)}</div>
+  <div class="aib">${aiText.replace(/</g,'&lt;').replace(/>/g,'&gt;').slice(0,2000)}</div>
 </div>`:''}
 
 <div class="sec">
   <div class="sec-title">🏢 Company</div>
   <div style="font-size:10px;color:#444;line-height:1.6;margin-bottom:8px">${d.description||'Not available.'}</div>
   <div class="g4">
-    <div class="card"><div class="cl">SECTOR</div><div class="cv" style="font-size:10px">${cv(d.sector)}</div></div>
-    <div class="card"><div class="cl">INDUSTRY</div><div class="cv" style="font-size:10px">${cv(d.industry)}</div></div>
-    <div class="card"><div class="cl">EMPLOYEES</div><div class="cv" style="font-size:10px">${d.employees!=null?d.employees:'N/A'}</div></div>
-    <div class="card"><div class="cl">COUNTRY</div><div class="cv" style="font-size:10px">${cv(d.country||d.exchange)}</div></div>
+    <div class="card"><div class="cl">SECTOR</div><div class="cv" style="font-size:10px">${cv2(d.sector)}</div></div>
+    <div class="card"><div class="cl">INDUSTRY</div><div class="cv" style="font-size:10px">${cv2(d.industry)}</div></div>
+    <div class="card"><div class="cl">EMPLOYEES</div><div class="cv" style="font-size:10px">${d.employees||'—'}</div></div>
+    <div class="card"><div class="cl">CONFIDENCE</div><div class="cv" style="font-size:10px;color:${conf>=70?'#00a86b':conf>=40?'#e67e00':'#e63946'}">${conf}%</div></div>
   </div>
 </div>
 
 <div class="foot">
-  <div class="disc">⚠️ For informational purposes only. Not financial advice. Data from Yahoo Finance. Past performance ≠ future results. Monte Carlo is a probabilistic model subject to assumptions. Always do independent due diligence.</div>
+  <div class="disc">⚠️ For informational purposes only. Not financial advice. Data from Yahoo Finance. Past performance ≠ future results. Monte Carlo is probabilistic. Always do independent due diligence.</div>
   <div class="fbrand"><b>StockSage Pro</b><span>${dateS}</span></div>
 </div>
 </div>
@@ -2786,34 +2649,91 @@ ${aiText&&aiText.length>30?`
 <script>
 window.onbeforeprint=function(){document.querySelector('.print-btns').style.display='none'};
 window.onafterprint=function(){document.querySelector('.print-btns').style.display='flex'};
-<\/script>
+<` + `/script>
 </body></html>`;
 
-  const win = window.open('', '_blank');
+  const win = window.open('','_blank');
   if (!win) { showToast('⚠️ Allow popups then retry'); return; }
   win.document.open(); win.document.write(html); win.document.close();
   showToast('🖨️ Report ready — tap Save as PDF');
 }
 
-function showExportModal(t, k) { exportAnalysis(); }
-function downloadText(t, k)    { exportAnalysis(); }
-function generatePDFReport(d)  { if(d) { const ci=d===currentData?document.getElementById('price-chart')?.toDataURL?.('image/png')||'':''; _openPDFWindow(d, ci); } }
+function showExportModal(t,k) { exportAnalysis(); }
+function downloadText(t,k)    { exportAnalysis(); }
+function generatePDFReport(d) { if(d) { let ci=''; try{const cv=document.getElementById('price-chart');if(cv&&cv.width>0)ci=cv.toDataURL('image/png');}catch(e){} _openPDF(d,ci); } }
 
 // ==================== HISTORY ====================
 function saveToHistory(data) {
-  let h = JSON.parse(localStorage.getItem('ss_history') || '[]');
-  const entry = {
+  let h = JSON.parse(localStorage.getItem('ss_history')||'[]');
+  h.unshift({
     id: Date.now(), ticker: data.ticker, name: data.companyName,
-    price: data.price, sym: data.currencySymbol || '₹',
+    price: data.price, sym: data.currencySymbol||'₹',
     signal: data.overallSignal,
-    change: (data.price && data.previousClose)
-      ? ((data.price-data.previousClose)/data.previousClose*100).toFixed(2) : '0.00',
-    source: data.dataSource || 'Yahoo Finance',
+    change: (data.price&&data.previousClose)?((data.price-data.previousClose)/data.previousClose*100).toFixed(2):'0.00',
+    source: data.dataSource||'Yahoo Finance',
     timestamp: new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}),
-    snapshot: { ...data, _rawCloses: undefined }, // don't persist full array
-  };
-  h.unshift(entry);
-  localStorage.setItem('ss_history', JSON.stringify(h.slice(0, 50)));
+    snapshot: { ...data, _rawCloses:undefined },
+  });
+  localStorage.setItem('ss_history', JSON.stringify(h.slice(0,50)));
+}
+
+function showHistory() {
+  const h    = JSON.parse(localStorage.getItem('ss_history')||'[]');
+  const modal= document.getElementById('history-modal');
+  const list = document.getElementById('history-list');
+  if (!modal||!list) return;
+  list.innerHTML = !h.length ? '<div style="padding:16px;color:var(--text3)">No history yet.</div>'
+    : h.map((e,i) => `
+    <div class="watchlist-item">
+      <div style="flex:1;cursor:pointer" onclick="loadSnapshot(${i})">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700">${e.ticker}</div>
+          <div class="signal-badge ${e.signal||'HOLD'}" style="font-size:9px;padding:3px 8px">${e.signal||'—'}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3)">${e.sym||'₹'}${e.price} · ${e.timestamp||''}</div>
+      </div>
+      <div style="display:flex;gap:6px;margin-left:8px">
+        <button onclick="exportAnalysis(${i})" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;font-size:10px;padding:3px 7px">📤</button>
+        <button onclick="deleteHistory(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:4px 8px">✕</button>
+      </div>
+    </div>`).join('');
+  modal.style.display = 'flex';
+}
+
+function loadSnapshot(i) {
+  const h = JSON.parse(localStorage.getItem('ss_history')||'[]');
+  const e = h[i];
+  if (!e?.snapshot) return;
+  currentData = e.snapshot; currentTicker = e.ticker;
+  document.getElementById('history-modal').style.display = 'none';
+  const welcome = document.getElementById('welcome-screen');
+  const tabs    = document.getElementById('tabs-bar');
+  if (welcome) welcome.style.display = 'none';
+  if (tabs)    tabs.style.display    = 'flex';
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-overview')?.classList.add('active');
+  document.querySelectorAll('.tab')[0]?.classList.add('active');
+  renderOverview(); renderTechnicals(); renderSentiment(); renderRisk(); renderFundamentals();
+  showToast('📖 Loaded: ' + e.ticker);
+}
+
+function deleteHistory(i) {
+  let h = JSON.parse(localStorage.getItem('ss_history')||'[]');
+  h.splice(i,1);
+  localStorage.setItem('ss_history', JSON.stringify(h));
+  showHistory();
+}
+
+function closeHistory() {
+  const m = document.getElementById('history-modal');
+  if (m) m.style.display = 'none';
+}
+
+function clearHistory() {
+  if (!confirm('Clear all history?')) return;
+  localStorage.removeItem('ss_history');
+  showHistory();
 }
 
 // ==================== ALERT POLLING ====================
@@ -2821,123 +2741,193 @@ let _alertTimer = null;
 function startAlertPolling() {
   if (_alertTimer) clearInterval(_alertTimer);
   _alertTimer = setInterval(async () => {
-    const als = JSON.parse(localStorage.getItem('ss_alerts') || '[]');
+    const als = JSON.parse(localStorage.getItem('ss_alerts')||'[]');
     if (!als.length) return;
-    const API = (localStorage.getItem('ss_api_url') || 'https://stocksage-api.vercel.app').replace(/\/$/,'');
+    const API = (localStorage.getItem('ss_api_url')||'https://stocksage-api.vercel.app').replace(/\/$/,'');
     for (const a of als) {
       try {
         const r = await fetch(`${API}/api/stock?symbol=${a.ticker}&exchange=NSE&range=1d&interval=1m`);
         const j = await r.json();
         if (!j.price) continue;
-        const triggered = a.type === 'above' ? j.price >= a.price : j.price <= a.price;
-        if (triggered) {
+        const hit = a.type==='above' ? j.price>=a.price : j.price<=a.price;
+        if (hit) {
           showToast(`🔔 ${a.ticker} ${a.type} ₹${a.price} — Now ₹${j.price}`);
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification(`StockSage: ${a.ticker}`, { body: `${a.ticker} is ${a.type} ₹${a.price}. Current: ₹${j.price}` });
+          if ('Notification' in window && Notification.permission==='granted') {
+            new Notification(`StockSage: ${a.ticker}`, { body:`${a.ticker} is ${a.type} ₹${a.price}. Current: ₹${j.price}` });
           }
         }
       } catch(e) {}
     }
-  }, 5 * 60 * 1000);
+  }, 5*60*1000);
 }
 
-// ==================== CHART RENDERS ====================
+// ==================== CHARTS ====================
 function renderPriceChart(history) {
   const ctx = document.getElementById('price-chart');
   if (!ctx) return;
-  if (priceChart) { priceChart.destroy(); priceChart = null; }
-  const data = (history || []).filter(v => v != null && v > 0);
+  if (priceChart) { priceChart.destroy(); priceChart=null; }
+  const data = (history||[]).filter(v=>v!=null&&v>0);
   if (data.length < 2) return;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const labels = data.map((_, i) => i === 0 ? 'Start' : i === data.length-1 ? 'Now' : '');
+  const mn=Math.min(...data), mx=Math.max(...data);
   priceChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        data,
-        borderColor: data[data.length-1] >= data[0] ? '#00e5a0' : '#ff4757',
-        borderWidth: 2, fill: true,
-        backgroundColor: data[data.length-1] >= data[0] ? 'rgba(0,229,160,0.06)' : 'rgba(255,71,87,0.06)',
-        pointRadius: 0, tension: 0.3,
-      }]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:true,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:i => (currentData?.currencySymbol||'₹')+parseFloat(i.raw).toFixed(2) } } },
-      scales:{
-        x:{display:false},
-        y:{ min:min*0.995, max:max*1.005, grid:{color:'rgba(30,45,74,0.3)'}, ticks:{color:'#4a6080',font:{size:9},callback:v=>(currentData?.currencySymbol||'₹')+v.toFixed(0)} }
-      }
-    }
+    type:'line',
+    data:{labels:data.map((_,i)=>i===0?'Start':i===data.length-1?'Now':''),
+      datasets:[{data, borderColor:data[data.length-1]>=data[0]?'#00e5a0':'#ff4757', borderWidth:2,
+        fill:true, backgroundColor:data[data.length-1]>=data[0]?'rgba(0,229,160,0.06)':'rgba(255,71,87,0.06)',
+        pointRadius:0, tension:0.3}]},
+    options:{responsive:true, maintainAspectRatio:true,
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label:i=>(currentData?.currencySymbol||'₹')+parseFloat(i.raw).toFixed(2)}}},
+      scales:{x:{display:false}, y:{min:mn*0.995,max:mx*1.005, grid:{color:'rgba(30,45,74,0.3)'},
+        ticks:{color:'#4a6080',font:{size:9},callback:v=>(currentData?.currencySymbol||'₹')+v.toFixed(0)}}}}
   });
 }
 
 function renderRsiChart(rsiHistory) {
   const ctx = document.getElementById('rsi-chart');
   if (!ctx) return;
-  if (rsiChart) { rsiChart.destroy(); rsiChart = null; }
-  const data = (rsiHistory || []).filter(v => v != null);
+  if (rsiChart) { rsiChart.destroy(); rsiChart=null; }
+  const data = (rsiHistory||[]).filter(v=>v!=null);
   if (data.length < 2) return;
   rsiChart = new Chart(ctx, {
     type:'line',
-    data:{ labels:data.map((_,i)=>i), datasets:[{data, borderColor:'#a855f7', borderWidth:1.5, fill:false, pointRadius:0, tension:0.3}] },
-    options:{
-      responsive:true, plugins:{legend:{display:false},
-        annotation:{ annotations:{ ob:{type:'line',yMin:70,yMax:70,borderColor:'rgba(255,71,87,0.5)',borderWidth:1,borderDash:[4,3]},
-          os:{type:'line',yMin:30,yMax:30,borderColor:'rgba(0,229,160,0.5)',borderWidth:1,borderDash:[4,3]}}}},
-      scales:{ x:{display:false}, y:{min:0,max:100,grid:{color:'rgba(30,45,74,0.3)'},ticks:{color:'#4a6080',font:{size:9}}} }
-    }
+    data:{labels:data.map((_,i)=>i), datasets:[{data, borderColor:'#a855f7', borderWidth:1.5, fill:false, pointRadius:0, tension:0.3}]},
+    options:{responsive:true,
+      plugins:{legend:{display:false}},
+      scales:{x:{display:false}, y:{min:0,max:100, grid:{color:'rgba(30,45,74,0.3)'}, ticks:{color:'#4a6080',font:{size:9}}}}}
   });
 }
 
 function renderMacdChart(macdH, signalH) {
   const ctx = document.getElementById('macd-chart');
   if (!ctx) return;
-  if (macdChart) { macdChart.destroy(); macdChart = null; }
-  const m = (macdH   || []).filter(v => v != null);
-  const s = (signalH || []).filter(v => v != null);
+  if (macdChart) { macdChart.destroy(); macdChart=null; }
+  const m=(macdH||[]).filter(v=>v!=null);
+  const s=(signalH||[]).filter(v=>v!=null);
   if (m.length < 2) return;
   macdChart = new Chart(ctx, {
     type:'line',
-    data:{
-      labels: m.map((_,i)=>i),
-      datasets:[
-        {data:m, borderColor:'#00d4ff', borderWidth:1.5, fill:false, pointRadius:0, tension:0.3, label:'MACD'},
-        {data:s, borderColor:'#ff6b35', borderWidth:1.5, fill:false, pointRadius:0, tension:0.3, label:'Signal'},
-      ]
-    },
-    options:{
-      responsive:true,
+    data:{labels:m.map((_,i)=>i), datasets:[
+      {data:m, borderColor:'#00d4ff', borderWidth:1.5, fill:false, pointRadius:0, tension:0.3, label:'MACD'},
+      {data:s, borderColor:'#ff6b35', borderWidth:1.5, fill:false, pointRadius:0, tension:0.3, label:'Signal'},
+    ]},
+    options:{responsive:true,
       plugins:{legend:{display:true,labels:{color:'#4a6080',font:{size:9},boxWidth:12}}},
-      scales:{ x:{display:false}, y:{grid:{color:'rgba(30,45,74,0.3)'},ticks:{color:'#4a6080',font:{size:9}}} }
-    }
+      scales:{x:{display:false}, y:{grid:{color:'rgba(30,45,74,0.3)'}, ticks:{color:'#4a6080',font:{size:9}}}}}
   });
+}
+
+// ==================== AI API ====================
+async function callClaude(prompt, maxTokens=500) {
+  return aiProvider==='gemini'&&geminiKey ? callGemini(prompt,maxTokens) : callAnthropic(prompt,maxTokens);
+}
+
+async function callAnthropic(prompt, maxTokens=500) {
+  if (!apiKey) throw new Error('No Anthropic key');
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxTokens,messages:[{role:'user',content:prompt}]})
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message);
+  return d.content[0].text;
+}
+
+async function callGemini(prompt, maxTokens=500) {
+  if (!geminiKey) throw new Error('No Gemini key');
+  const MODELS = ['gemini-2.5-flash-lite-preview-06-17','gemini-2.5-flash','gemini-2.5-flash-preview-04-17','gemini-2.0-flash-lite'];
+  const cap = Math.min(maxTokens,1024);
+  let lastErr='';
+  for (const model of MODELS) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:cap,temperature:0.2}})
+      });
+      const d = await r.json();
+      if (r.status===404||d.error?.code===404) { lastErr=model+' not found'; continue; }
+      if (r.status===429||d.error?.status==='RESOURCE_EXHAUSTED') { lastErr=model+' quota'; continue; }
+      if (d.error) throw new Error(d.error.message||model+' error');
+      const txt = d.candidates?.[0]?.content?.parts?.[0]?.text||'';
+      if (!txt) { lastErr=model+' empty'; continue; }
+      return txt;
+    } catch(e) {
+      lastErr=e.message;
+      if (/404|429|quota|RESOURCE_EXHAUSTED/i.test(e.message)) continue;
+      throw e;
+    }
+  }
+  throw new Error('Gemini all models failed: '+lastErr);
+}
+
+async function callAnthropicWithWebSearch(prompt, maxTokens=800) {
+  if (aiProvider==='gemini'||!apiKey) return callClaude(prompt,maxTokens);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxTokens,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:prompt}]})
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message);
+  return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+}
+
+// ==================== AI AGENTS TAB ====================
+async function runAgents() {
+  if (!currentData) { showToast('⚠️ Analyze a stock first'); return; }
+  const d   = currentData;
+  const btn = document.getElementById('run-agents-btn');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Running...'; }
+  showToast('🤖 Running deep analysis...');
+  const prompt = `You are a senior equity analyst. Deep-dive analysis of ${d.ticker} (${d.companyName}).
+Price: ${d.currencySymbol}${d.price} | Signal: ${d.overallSignal} | RSI: ${d.rsi14} | P/E: ${d.pe} | ROE: ${d.roe}% | Sector: ${d.sector}
+
+Write 5 sections:
+1. COMPETITIVE POSITION (2-3 sentences): market moat, competitive advantages, key risks
+2. GROWTH CATALYSTS (2-3 sentences): specific upcoming tailwinds
+3. VALUATION ANALYSIS (2 sentences): fair value range, premium/discount
+4. RISK FACTORS (2 sentences): specific downside risks
+5. RECOMMENDATION (1 sentence): clear directional view`;
+  try {
+    const result = await callClaude(prompt, 700);
+    const html = (result||'').replace(/\*\*([^*]+)\*\*/g,'<b style="color:var(--accent)">$1</b>').replace(/\n/g,'<br>');
+    setEl('agents-output', `<div class="ai-panel"><div class="ai-header"><div class="ai-dot"></div><div class="ai-title">DEEP DIVE: ${d.ticker}</div></div><div class="ai-body" style="line-height:1.8">${html}</div></div>`);
+  } catch(e) {
+    setEl('agents-output', errorCard('AI agents failed: '+e.message));
+  }
+  if (btn) { btn.disabled=false; btn.textContent='▶ RUN AGENTS'; }
+}
+
+async function chatWithAI(userMsg) {
+  if (!currentData) { showToast('⚠️ Analyze a stock first'); return; }
+  const chatBox = document.getElementById('chat-messages');
+  if (!chatBox) return;
+  chatHistory.push({role:'user',content:userMsg});
+  chatBox.innerHTML += `<div class="chat-msg user">${userMsg}</div>`;
+  chatBox.scrollTop = chatBox.scrollHeight;
+  const ctx = `Stock: ${currentData.ticker} (${currentData.companyName}), Price: ${currentData.currencySymbol}${currentData.price}, Signal: ${currentData.overallSignal}, RSI: ${currentData.rsi14}, P/E: ${currentData.pe}`;
+  try {
+    const resp = await callClaude(`Context: ${ctx}\n\nUser: ${userMsg}\n\nAnswer concisely as a financial analyst.`, 300);
+    chatHistory.push({role:'assistant',content:resp});
+    chatBox.innerHTML += `<div class="chat-msg ai">${resp}</div>`;
+  } catch(e) {
+    chatBox.innerHTML += `<div class="chat-msg ai" style="color:var(--red)">AI unavailable: ${e.message}</div>`;
+  }
+  chatBox.scrollTop = chatBox.scrollHeight;
 }
 
 // ==================== SETTINGS ====================
 function changeApiKey() {
-  const g = aiProvider === 'gemini';
-  const key = prompt('Enter new ' + (g?'Gemini':'Anthropic') + ' API key:');
+  const g = aiProvider==='gemini';
+  const key = prompt('Enter new '+(g?'Gemini':'Anthropic')+' API key:');
   if (!key) return;
-  if (g) { geminiKey = key; localStorage.setItem('ss_geminikey', key); }
-  else   { apiKey    = key; localStorage.setItem('ss_apikey',    key); }
-  settingsSwitchProvider(aiProvider);
+  if (g) { geminiKey=key; localStorage.setItem('ss_geminikey',key); }
+  else   { apiKey=key;    localStorage.setItem('ss_apikey',key); }
   showToast('✅ Key updated');
 }
 
-function addSecondKey() {
-  const other = aiProvider === 'gemini' ? 'Anthropic' : 'Gemini';
-  const key = prompt('Enter ' + other + ' API key:');
-  if (!key) return;
-  if (aiProvider === 'gemini') { apiKey    = key; localStorage.setItem('ss_apikey',    key); }
-  else                          { geminiKey = key; localStorage.setItem('ss_geminikey', key); }
-  showToast('✅ ' + other + ' key saved');
-}
-
 function changeApiUrl() {
-  const url = prompt('Enter Vercel API URL:', localStorage.getItem('ss_api_url') || 'https://stocksage-api.vercel.app');
+  const url = prompt('Enter Vercel API URL:', localStorage.getItem('ss_api_url')||'https://stocksage-api.vercel.app');
   if (url && url.startsWith('https://')) {
     localStorage.setItem('ss_api_url', url.replace(/\/$/,''));
     const el = document.getElementById('api-url-display');
@@ -2947,37 +2937,47 @@ function changeApiUrl() {
 }
 
 function setCurrency(btn, code, sym) {
-  currency = { code, symbol: sym };
-  if (currentData) { currentData.currencyCode = code; currentData.currencySymbol = sym; renderOverview(); }
-  document.querySelectorAll('#page-settings .period-btn').forEach(b => b.classList.remove('active'));
+  currency = { code, symbol:sym };
+  document.querySelectorAll('#page-settings .period-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  showToast('Currency: ' + code);
+  showToast('Currency: '+code);
 }
 
 function setExchange(btn, exch) {
   exchange = exch;
-  if (exch === 'NSE' || exch === 'BSE') currency = { code:'INR', symbol:'₹' };
-  document.querySelectorAll('#page-settings .period-btn').forEach(b => b.classList.remove('active'));
+  if (exch==='NSE'||exch==='BSE') currency={ code:'INR', symbol:'₹' };
+  document.querySelectorAll('#page-settings .period-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  showToast('Exchange: ' + exch);
+  showToast('Exchange: '+exch);
 }
+
+function addSecondKey() {
+  const other = aiProvider==='gemini'?'Anthropic':'Gemini';
+  const key = prompt('Enter '+other+' API key:');
+  if (!key) return;
+  if (aiProvider==='gemini') { apiKey=key; localStorage.setItem('ss_apikey',key); }
+  else { geminiKey=key; localStorage.setItem('ss_geminikey',key); }
+  showToast('✅ '+other+' key saved');
+}
+
+function updateSettingsDisplay() {}
 
 // ==================== WATCHLIST ====================
 function addToWatchlist() {
-  const ticker = (document.getElementById('wl-ticker-input')?.value || '').trim().toUpperCase();
-  const name   = (document.getElementById('wl-name-input')?.value  || '').trim();
-  if (!ticker) { showToast('⚠️ Enter a ticker'); return; }
-  if (watchlist.find(w => w.ticker === ticker)) { showToast('Already in watchlist'); return; }
-  watchlist.push({ ticker, name: name || ticker, addedAt: new Date().toLocaleDateString('en-IN') });
+  const t = (document.getElementById('wl-ticker-input')?.value||'').trim().toUpperCase();
+  const n = (document.getElementById('wl-name-input')?.value||'').trim();
+  if (!t) { showToast('⚠️ Enter a ticker'); return; }
+  if (watchlist.find(w=>w.ticker===t)) { showToast('Already in watchlist'); return; }
+  watchlist.push({ticker:t, name:n||t, addedAt:new Date().toLocaleDateString('en-IN')});
   localStorage.setItem('ss_watchlist', JSON.stringify(watchlist));
   renderWatchlist();
-  if (document.getElementById('wl-ticker-input')) document.getElementById('wl-ticker-input').value = '';
-  if (document.getElementById('wl-name-input'))   document.getElementById('wl-name-input').value   = '';
-  showToast('✅ Added ' + ticker);
+  if (document.getElementById('wl-ticker-input')) document.getElementById('wl-ticker-input').value='';
+  if (document.getElementById('wl-name-input'))   document.getElementById('wl-name-input').value='';
+  showToast('✅ Added '+t);
 }
 
 function removeFromWatchlist(ticker) {
-  watchlist = watchlist.filter(w => w.ticker !== ticker);
+  watchlist = watchlist.filter(w=>w.ticker!==ticker);
   localStorage.setItem('ss_watchlist', JSON.stringify(watchlist));
   renderWatchlist();
 }
@@ -2985,8 +2985,8 @@ function removeFromWatchlist(ticker) {
 function renderWatchlist() {
   const el = document.getElementById('watchlist-items');
   if (!el) return;
-  if (!watchlist.length) { el.innerHTML = '<div class="text-sm" style="padding:16px">No stocks added yet.</div>'; return; }
-  el.innerHTML = watchlist.map(w => `
+  el.innerHTML = !watchlist.length ? '<div class="text-sm" style="padding:16px">No stocks added yet.</div>'
+    : watchlist.map(w=>`
     <div class="watchlist-item">
       <div onclick="quickAnalyze('${w.ticker}')" style="cursor:pointer;flex:1">
         <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--text)">${w.ticker}</div>
@@ -2998,20 +2998,20 @@ function renderWatchlist() {
 
 // ==================== ALERTS ====================
 function createAlert() {
-  const ticker = (document.getElementById('alert-ticker')?.value || '').trim().toUpperCase();
-  const type   = document.getElementById('alert-type')?.value || 'above';
-  const price  = parseFloat(document.getElementById('alert-price')?.value || '0');
-  if (!ticker || isNaN(price) || price <= 0) { showToast('⚠️ Fill all alert fields'); return; }
-  alerts.push({ id: Date.now(), ticker, type, price, createdAt: new Date().toLocaleDateString('en-IN') });
+  const ticker = (document.getElementById('alert-ticker')?.value||'').trim().toUpperCase();
+  const type   = document.getElementById('alert-type')?.value||'above';
+  const price  = parseFloat(document.getElementById('alert-price')?.value||'0');
+  if (!ticker||isNaN(price)||price<=0) { showToast('⚠️ Fill all fields'); return; }
+  alerts.push({id:Date.now(), ticker, type, price, createdAt:new Date().toLocaleDateString('en-IN')});
   localStorage.setItem('ss_alerts', JSON.stringify(alerts));
   renderAlerts();
-  if (document.getElementById('alert-ticker')) document.getElementById('alert-ticker').value = '';
-  if (document.getElementById('alert-price'))  document.getElementById('alert-price').value  = '';
-  showToast('✅ Alert set: ' + ticker + ' ' + type + ' ₹' + price);
+  if (document.getElementById('alert-ticker')) document.getElementById('alert-ticker').value='';
+  if (document.getElementById('alert-price'))  document.getElementById('alert-price').value='';
+  showToast('✅ Alert: '+ticker+' '+type+' ₹'+price);
 }
 
 function deleteAlert(id) {
-  alerts = alerts.filter(a => a.id !== id);
+  alerts = alerts.filter(a=>a.id!==id);
   localStorage.setItem('ss_alerts', JSON.stringify(alerts));
   renderAlerts();
 }
@@ -3019,183 +3019,40 @@ function deleteAlert(id) {
 function renderAlerts() {
   const el = document.getElementById('alerts-list');
   if (!el) return;
-  if (!alerts.length) { el.innerHTML = '<div class="text-sm" style="padding:16px">No alerts set.</div>'; return; }
-  el.innerHTML = alerts.map(a => `
+  el.innerHTML = !alerts.length ? '<div class="text-sm" style="padding:16px">No alerts set.</div>'
+    : alerts.map(a=>`
     <div class="watchlist-item">
       <div style="flex:1">
         <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--text)">${a.ticker}</div>
-        <div style="font-size:11px;color:var(--text3)">${a.type === 'above' ? '▲ Above' : '▼ Below'} ₹${a.price} · ${a.createdAt||''}</div>
+        <div style="font-size:11px;color:var(--text3)">${a.type==='above'?'▲ Above':'▼ Below'} ₹${a.price} · ${a.createdAt||''}</div>
       </div>
       <button onclick="deleteAlert(${a.id})" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:4px 8px">✕</button>
     </div>`).join('');
 }
 
-// ==================== HISTORY UI ====================
-function showHistory() {
-  const history = JSON.parse(localStorage.getItem('ss_history') || '[]');
-  const modal   = document.getElementById('history-modal');
-  const list    = document.getElementById('history-list');
-  if (!modal || !list) return;
-  if (!history.length) { list.innerHTML = '<div class="text-sm" style="padding:16px">No history yet.</div>'; }
-  else {
-    list.innerHTML = history.map((h, i) => `
-      <div class="watchlist-item">
-        <div style="flex:1;cursor:pointer" onclick="loadSnapshot(${i})">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700">${h.ticker}</div>
-            <div class="signal-badge ${h.signal||'HOLD'}" style="font-size:9px;padding:3px 8px">${h.signal||'–'}</div>
-          </div>
-          <div style="font-size:11px;color:var(--text3)">${h.sym||'₹'}${h.price} · ${h.timestamp||''}</div>
-          <div style="font-size:10px;color:var(--text3)">${h.source||''}</div>
-        </div>
-        <div style="display:flex;gap:6px;margin-left:8px">
-          <button onclick="exportAnalysis(${i})" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;font-size:10px;padding:3px 7px">📤</button>
-          <button onclick="deleteHistory(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:4px 8px">✕</button>
-        </div>
-      </div>`).join('');
-  }
-  modal.style.display = 'flex';
+// ==================== PERIOD / TAB ====================
+function changePeriod(btn, period) {
+  document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
 }
 
-function loadSnapshot(index) {
-  const history = JSON.parse(localStorage.getItem('ss_history') || '[]');
-  const entry   = history[index];
-  if (!entry?.snapshot) return;
-  currentData   = entry.snapshot;
-  currentTicker = entry.ticker;
-  document.getElementById('history-modal').style.display = 'none';
-  document.getElementById('welcome-screen').style.display = 'none';
-  document.getElementById('tabs-bar').style.display = 'flex';
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('tab-overview')?.classList.add('active');
-  document.querySelectorAll('.tab')[0]?.classList.add('active');
-  renderOverview(); renderTechnicals(); renderSentiment(); renderRisk(); renderFundamentals();
-  showToast('📖 Loaded: ' + entry.ticker);
+function showPage(page, btn) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+page)?.classList.add('active');
+  if (btn) btn.classList.add('active');
 }
 
-function deleteHistory(index) {
-  let h = JSON.parse(localStorage.getItem('ss_history') || '[]');
-  h.splice(index, 1);
-  localStorage.setItem('ss_history', JSON.stringify(h));
-  showHistory();
+function switchTab(tab) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+tab)?.classList.add('active');
+  document.querySelectorAll('.tab').forEach(t=>{ if((t.dataset.tab||'')===tab) t.classList.add('active'); });
 }
 
-// ==================== AI AGENTS TAB ====================
-async function runAgents() {
-  if (!currentData) { showToast('⚠️ Analyze a stock first'); return; }
-  showToast('🤖 Running AI agents...');
-  const d   = currentData;
-  const btn = document.getElementById('run-agents-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Running...'; }
+// ==================== SKELETON / UTILS ====================
+function setEl(id, html) { const e=document.getElementById(id); if(e) e.innerHTML=html; }
 
-  const promptDeep = `You are a senior equity research analyst. Provide an exhaustive deep-dive analysis of ${d.ticker} (${d.companyName}).
-
-Available data: Price ${d.currencySymbol}${d.price}, Signal: ${d.overallSignal}, RSI: ${d.rsi14}, Beta: ${d.beta}, Vol: ${d.volatility30d}%, P/E: ${d.pe}, ROE: ${d.roe}%, Sector: ${d.sector}
-
-Provide:
-1. COMPETITIVE POSITION (2-3 sentences): market position, moat, key risks
-2. GROWTH CATALYSTS (2-3 sentences): specific upcoming catalysts
-3. VALUATION ANALYSIS (2 sentences): fair value range, discount/premium to peers
-4. RISK FACTORS (2 sentences): specific downside risks
-5. RECOMMENDATION (1 sentence): clear actionable view
-
-Be specific, no placeholders.`;
-
-  try {
-    const result = await callClaude(promptDeep, 700);
-    const html = (result || '')
-      .replace(/\*\*([^*]+)\*\*/g, '<b style="color:var(--accent)">$1</b>')
-      .replace(/\d+\. ([A-Z ]+)/g, '<br><b style="color:var(--yellow)">$&</b>')
-      .replace(/\n/g, '<br>');
-    document.getElementById('agents-output').innerHTML = `
-      <div class="ai-panel">
-        <div class="ai-header"><div class="ai-dot"></div><div class="ai-title">DEEP DIVE: ${d.ticker}</div></div>
-        <div class="ai-body" style="line-height:1.8">${html}</div>
-      </div>`;
-  } catch(e) {
-    document.getElementById('agents-output').innerHTML = errorCard('AI agents failed: ' + e.message);
-  }
-  if (btn) { btn.disabled = false; btn.textContent = '▶ RUN AGENTS'; }
-}
-
-async function chatWithAI(userMsg) {
-  if (!currentData) { showToast('⚠️ Analyze a stock first'); return; }
-  const chatBox = document.getElementById('chat-messages');
-  if (!chatBox) return;
-  chatHistory.push({ role: 'user', content: userMsg });
-  chatBox.innerHTML += `<div class="chat-msg user">${userMsg}</div>`;
-  chatBox.scrollTop = chatBox.scrollHeight;
-  const sysCxt = `Stock: ${currentData.ticker} (${currentData.companyName}), Price: ${currentData.currencySymbol}${currentData.price}, Signal: ${currentData.overallSignal}, RSI: ${currentData.rsi14}, P/E: ${currentData.pe}`;
-  try {
-    const resp = await callClaude(`Context: ${sysCxt}\n\nUser: ${userMsg}\n\nAnswer concisely as a financial analyst.`, 300);
-    chatHistory.push({ role: 'assistant', content: resp });
-    chatBox.innerHTML += `<div class="chat-msg ai">${resp}</div>`;
-  } catch(e) {
-    chatBox.innerHTML += `<div class="chat-msg ai" style="color:var(--red)">AI unavailable: ${e.message}</div>`;
-  }
-  chatBox.scrollTop = chatBox.scrollHeight;
-}
-
-// ==================== AI API ====================
-async function callClaude(prompt, maxTokens = 500) {
-  if (aiProvider === 'gemini' && geminiKey) return callGemini(prompt, maxTokens);
-  return callAnthropic(prompt, maxTokens);
-}
-
-async function callAnthropic(prompt, maxTokens = 500) {
-  if (!apiKey) throw new Error('No Anthropic key. Add in Settings.');
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
-    body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:maxTokens, messages:[{role:'user',content:prompt}] })
-  });
-  const d = await r.json();
-  if (d.error) throw new Error(d.error.message);
-  return d.content[0].text;
-}
-
-async function callGemini(prompt, maxTokens = 500) {
-  if (!geminiKey) throw new Error('No Gemini key. Add in Settings.');
-  const MODELS = ['gemini-2.5-flash-lite-preview-06-17','gemini-2.5-flash','gemini-2.5-flash-preview-04-17','gemini-2.0-flash-lite'];
-  const safe = Math.min(maxTokens, 1024);
-  let lastErr = '';
-  for (const model of MODELS) {
-    try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:safe,temperature:0.2}})
-      });
-      const d = await r.json();
-      if (r.status===404||d.error?.code===404){lastErr=model+': not found';continue;}
-      if (r.status===429||d.error?.status==='RESOURCE_EXHAUSTED'){lastErr=model+': quota';continue;}
-      if (d.error) throw new Error(d.error.message||model+' error');
-      const txt = d.candidates?.[0]?.content?.parts?.[0]?.text||'';
-      if (!txt){lastErr=model+': empty';continue;}
-      return txt;
-    } catch(e) {
-      lastErr = e.message;
-      if (/404|not found|429|quota|RESOURCE_EXHAUSTED/i.test(e.message)) continue;
-      throw e;
-    }
-  }
-  throw new Error('Gemini quota exceeded. Wait 1 min. Last: ' + lastErr);
-}
-
-async function callAnthropicWithWebSearch(prompt, maxTokens = 800) {
-  if (aiProvider === 'gemini' || !apiKey) return callClaude(prompt, maxTokens);
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxTokens,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:prompt}]})
-  });
-  const d = await r.json();
-  if (d.error) throw new Error(d.error.message);
-  const tbs = (d.content||[]).filter(b=>b.type==='text');
-  return tbs.length ? tbs[tbs.length-1].text : '';
-}
-
-// ==================== SKELETON / LOADING ====================
 function skeletonCard() {
   return `<div class="stock-header" style="animation:pulse 1.5s infinite">
     <div style="height:12px;background:var(--border);border-radius:4px;width:55%;margin-bottom:8px"></div>
@@ -3206,20 +3063,14 @@ function skeletonCard() {
 function skeletonGrid(n) {
   return `<div class="stats-grid">${Array(n).fill('<div class="stat-card" style="animation:pulse 1.5s infinite"><div style="height:8px;background:var(--border);border-radius:2px;width:55%;margin-bottom:7px"></div><div style="height:18px;background:var(--border);border-radius:3px;width:75%"></div></div>').join('')}</div>`;
 }
-function loadingCard(msg) {
-  return `<div class="ai-panel" style="margin-bottom:16px"><div class="ai-loading"><div class="spinner"></div>${msg}</div></div>`;
-}
-function errorCard(msg) {
-  return `<div class="stat-card" style="margin-bottom:16px;border-color:var(--red)"><div style="color:var(--red);font-size:12px">⚠️ ${msg}</div></div>`;
-}
+function loadingCard(msg) { return `<div class="ai-panel" style="margin-bottom:16px"><div class="ai-loading"><div class="spinner"></div>${msg}</div></div>`; }
+function errorCard(msg)   { return `<div class="stat-card" style="margin-bottom:16px;border-color:var(--red)"><div style="color:var(--red);font-size:12px">⚠️ ${msg}</div></div>`; }
 
-// ==================== UTILS ====================
 function fmt(n) {
-  if (n===undefined||n===null||n==='N/A'||n===''||isNaN(n)) return 'N/A';
-  const num = parseFloat(n);
+  if (n===undefined||n===null||n===''||isNaN(n)) return 'N/A';
+  const num=parseFloat(n);
   if (isNaN(num)) return String(n);
-  if (num >= 1000) return num.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-  return num.toFixed(2);
+  return num>=1000 ? num.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}) : num.toFixed(2);
 }
 function fmtVol(n) {
   if (!n||n===0||isNaN(n)) return 'N/A';
@@ -3228,43 +3079,27 @@ function fmtVol(n) {
   if (n>=1e3) return (n/1e3).toFixed(1)+'K';
   return n.toString();
 }
-function fmtMarketCap(v, isIndian) {
-  if (!v||isNaN(v)) return 'N/A';
-  if (isIndian) {
-    const cr=v/1e7;
-    if (cr>=1e5) return (cr/1e5).toFixed(2)+'L Cr';
-    if (cr>=1e3) return (cr/1e3).toFixed(2)+'K Cr';
-    return cr.toFixed(2)+' Cr';
-  }
-  if (v>=1e12) return (v/1e12).toFixed(2)+'T';
-  if (v>=1e9)  return (v/1e9).toFixed(2)+'B';
-  if (v>=1e6)  return (v/1e6).toFixed(2)+'M';
-  return v.toString();
+function fmtLargeNum(v, isINR) {
+  if (!v||isNaN(v)) return null;
+  const abs=Math.abs(v);
+  if (isINR) { const cr=abs/1e7; if(cr>=1e5) return (v/1e12).toFixed(2)+'L Cr'; if(cr>=1e3) return (cr/1e3).toFixed(2)+'K Cr'; return cr.toFixed(2)+' Cr'; }
+  if (abs>=1e12) return (v/1e12).toFixed(2)+'T'; if (abs>=1e9) return (v/1e9).toFixed(2)+'B'; if (abs>=1e6) return (v/1e6).toFixed(2)+'M';
+  return v.toLocaleString();
 }
 function parseKV(text) {
-  const obj = {};
+  const obj={};
   (text||'').split('\n').forEach(line => {
-    const idx = line.indexOf(':');
-    if (idx < 1) return;
-    const k = line.slice(0, idx).trim();
-    const v = line.slice(idx+1).trim();
-    if (k && v && !v.startsWith('(') && v !== 'value' && v.length < 300) obj[k] = v;
+    const idx=line.indexOf(':'); if(idx<1) return;
+    const k=line.slice(0,idx).trim(), v=line.slice(idx+1).trim();
+    if (k&&v&&v!=='value'&&v.length<300) obj[k]=v;
   });
   return obj;
 }
-function num(v, def=0) {
+function numParse(v, def=0) {
   if (v==null) return def;
-  const n = parseFloat(String(v).replace(/[^\d.\-]/g,''));
-  return isNaN(n) ? def : n;
+  const n=parseFloat(String(v).replace(/[^\d.\-]/g,''));
+  return isNaN(n)?def:n;
 }
-
-// ==================== PERIOD CHART (overview tabs) ====================
-function changePeriod(btn, period) {
-  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  if (currentData) showToast('📅 Chart period: ' + period);
-}
-
 
 </script>
 </body>
