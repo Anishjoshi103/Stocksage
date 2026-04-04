@@ -1566,7 +1566,14 @@ async function analyzeStock() {
   }
 
   // ── Convert Yahoo decimal ratios → % ──────────────────────────────────────
-  const pct2 = (v, d=2) => (v != null && isFinite(v)) ? parseFloat((v*100).toFixed(d)) : null;
+  // Yahoo returns decimals: ROE=0.18 means 18%, margins same, growth=0.12 means 12%
+  // But P/E, P/B, D/E are already in their natural units (not decimals)
+  const pct2 = (v, d=2) => {
+    if (v == null || !isFinite(v)) return null;
+    // If absolute value > 10, it's likely already in % (e.g. 18.5) — don't double-multiply
+    const pv = Math.abs(v) > 5 ? parseFloat(v.toFixed(d)) : parseFloat((v*100).toFixed(d));
+    return isFinite(pv) ? pv : null;
+  };
   const val2 = (v, d=2) => (v != null && isFinite(v) && v!==0) ? parseFloat(v.toFixed(d)) : null;
   const sym   = raw.currencySymbol || (isIndian ? '₹' : '$');
 
@@ -1620,7 +1627,17 @@ async function analyzeStock() {
     maxDrawdown: risk.maxDrawdown, varDaily: risk.var95,
     riskScore: risk.riskScore, riskLevel: risk.riskLevel,
 
-    overallSignal: computeSignal(ind, raw.price),
+    // Decision engine — full signal + confidence + R/R
+    ...(()=>{
+      const dec = computeDecision(ind, raw.price);
+      return {
+        overallSignal:    dec.signal,
+        signalScore:      dec.score,
+        signalConfidence: dec.confidence,
+        rrRatio:          dec.rrRatio,
+        stopPct:          dec.stopPct,
+      };
+    })(),
     monteCarlo: mc,
 
     // Charts
@@ -1678,8 +1695,13 @@ async function analyzeStock() {
     `Sector: ${raw.sector||'N/A'} | Confidence: ${Math.round((raw.confidence||0)*100)}%`,
   ].join('\n');
 
-  const PROMPT_ANALYSIS = `You are a Bloomberg terminal AI writing an institutional equity research note.
-Stock: ${input} (${raw.companyName||input}) — ${raw.sector||''} — ${detExch}
+  const decisionStr = `Signal: ${d.overallSignal} | Score: ${d.signalScore?.toFixed(1)??'N/A'}/100 | Confidence: ${d.signalConfidence??'N/A'}% | R/R: ${d.rrRatio?.toFixed(2)??'N/A'}:1 | ATR Stop: ${d.stopPct?.toFixed(2)??'N/A'}%`;
+
+  const PROMPT_ANALYSIS = `You are a Bloomberg terminal senior equity analyst. Write an institutional-grade research note using ONLY the real data provided. Every sentence must reference specific numbers. No filler phrases.
+
+STOCK: ${input} (${raw.companyName||input}) | ${raw.sector||''} | ${detExch}
+
+DECISION ENGINE: ${decisionStr}
 
 TECHNICAL DATA:
 ${techCtx}
@@ -1690,22 +1712,22 @@ ${riskCtx}
 FUNDAMENTALS:
 ${fundCtx}
 
-Write a professional 5-section analysis. Use ONLY the real data above. Zero generic filler. Be specific to actual numbers.
+Write these 5 sections with professional density:
 
 **1. SUMMARY**
-One paragraph: what this stock is, current market position, and immediate take.
+One paragraph: price, market context, current regime (trending/ranging), and one-sentence investment thesis.
 
 **2. TECHNICAL OUTLOOK**
-3-4 sentences: trend vs moving averages, RSI condition, MACD crossover status, Bollinger Band position, indicator confluence verdict.
+3-4 sentences: Describe trend relative to SMA50 (${sym}${d.sma50?.toFixed(2)??'N/A'}) and SMA200 (${sym}${d.sma200?.toFixed(2)??'N/A'}). State RSI (${d.rsi14?.toFixed(1)??'N/A'}) momentum condition. Describe MACD histogram (${d.macdHistogram?.toFixed(3)??'N/A'}) crossover status. State Bollinger Band position and whether breakout or compression is occurring.
 
-**3. RISK ASSESSMENT**
-3 sentences: volatility regime vs sector norms, drawdown risk, beta interpretation, Monte Carlo downside implication.
+**3. RISK ANALYSIS**
+3 sentences: Interpret volatility (${d.volatility30d?.toFixed(1)??'N/A'}% annualised) as high/moderate/low vs sector norms. Explain max drawdown (${d.maxDrawdown?.toFixed(1)??'N/A'}%) implications for position sizing. Describe what the Monte Carlo VaR of ${d.monteCarlo?.mcVaR??'N/A'}% implies for the 30-day downside tail.
 
 **4. FUNDAMENTAL VIEW**
-3 sentences: valuation (cheap/fair/expensive vs growth rate), profitability quality, balance sheet health.
+3 sentences: Assess valuation using P/E (${d.pe?.toFixed(2)??'N/A'}) vs sector growth rate. Comment on profitability quality using ROE (${d.roe?.toFixed(1)??'N/A'}%) and operating margin (${d.operatingMargin?.toFixed(1)??'N/A'}%). Assess capital structure using D/E (${d.debtToEquity?.toFixed(2)??'N/A'}) and current ratio (${d.currentRatio?.toFixed(2)??'N/A'}).
 
-**5. TRADE BIAS**
-3 sentences: state Bullish/Neutral/Bearish clearly in first word. Short-term (1-4 weeks) entry/exit logic. Key price level that invalidates thesis.`;
+**5. TRADE SETUP**
+3 sentences: State Bullish/Neutral/Bearish directional view in the first word. Specify entry zone relative to SMA50, stop loss at ${d.stopPct?.toFixed(2)??'2'}% ATR distance, and target at the ${sym}${d.monteCarlo?.bull??'N/A'} P95 MC scenario. State the risk/reward ratio of ${d.rrRatio?.toFixed(2)??'N/A'}:1 and the specific technical level that would invalidate this thesis.`;
 
   const PROMPT_NEWS = `Financial analyst. Stock: ${input} (${raw.companyName||input}), ${raw.sector||''}, ${detExch}.
 Reply ONLY as key: value lines:
@@ -1920,65 +1942,230 @@ function computeRisk(closes, betaFromYahoo, currentPrice) {
 function runMonteCarloEngine(closes, currentPrice, numPaths=5000, days=30) {
   const valid = (closes||[]).filter(v => v!=null && v>0);
   if (valid.length < 30) return null;
+
+  // Log returns
   const logRet = [];
-  for (let i=1; i<valid.length; i++) { const r=Math.log(valid[i]/valid[i-1]); if(isFinite(r)) logRet.push(r); }
+  for (let i=1; i<valid.length; i++) {
+    const r = Math.log(valid[i]/valid[i-1]);
+    if (isFinite(r)) logRet.push(r);
+  }
   if (logRet.length < 20) return null;
-  const N=logRet.length, mu=logRet.reduce((a,b)=>a+b,0)/N;
-  const variance=logRet.reduce((a,b)=>a+(b-mu)**2,0)/(N-1);
-  const sigma=Math.sqrt(variance), drift=mu-variance/2;
-  // Box-Muller paired
-  let spare=null;
+
+  const N        = logRet.length;
+  const mu       = logRet.reduce((a,b)=>a+b,0) / N;
+  const variance = logRet.reduce((a,b)=>a+(b-mu)**2,0) / (N-1);
+  const sigma    = Math.sqrt(variance);
+  const drift    = mu - variance/2;
+
+  // Paired Box-Muller for efficiency
+  let spare = null;
   const rn = () => {
-    if (spare!==null) { const s=spare; spare=null; return s; }
+    if (spare !== null) { const s=spare; spare=null; return s; }
     let u,v,s2;
     do { u=Math.random()*2-1; v=Math.random()*2-1; s2=u*u+v*v; } while(s2>=1||s2===0);
     const f=Math.sqrt(-2*Math.log(s2)/s2); spare=v*f; return u*f;
   };
-  const S0=currentPrice;
-  const finals=new Float64Array(numPaths);
-  const samplePaths=[];
-  // First 50 paths stored fully for chart rendering
+
+  const S0     = currentPrice;
+  const finals = new Float64Array(numPaths);
+  const samplePaths = []; // first 100 paths for chart
+
   for (let p=0; p<numPaths; p++) {
-    let pr=S0;
-    const store=p<50;
-    const path=store?[parseFloat(S0.toFixed(2))]:null;
-    for (let d=0; d<days; d++) { pr*=Math.exp(drift+sigma*rn()); if(store) path.push(parseFloat(pr.toFixed(2))); }
-    finals[p]=pr;
-    if (store) samplePaths.push(path);
+    let pr     = S0;
+    const store = p < 100;
+    const path  = store ? [S0] : null;
+    for (let d=0; d<days; d++) {
+      pr *= Math.exp(drift + sigma * rn());
+    }
+    finals[p] = pr;
+    if (store) {
+      // Reconstruct path for chart with correlated noise
+      let rp = S0;
+      const fullPath = [parseFloat(S0.toFixed(2))];
+      let rng_spare = null;
+      const rng = () => {
+        if (rng_spare!==null){const ss=rng_spare;rng_spare=null;return ss;}
+        let u2,v2,s3;
+        do{u2=Math.random()*2-1;v2=Math.random()*2-1;s3=u2*u2+v2*v2;}while(s3>=1||s3===0);
+        const ff=Math.sqrt(-2*Math.log(s3)/s3);rng_spare=v2*ff;return u2*ff;
+      };
+      for (let d=0; d<days; d++) {
+        rp *= Math.exp(drift + sigma * rng());
+        fullPath.push(parseFloat(rp.toFixed(2)));
+      }
+      samplePaths.push(fullPath);
+    }
   }
+
+  // Sort for percentile extraction
   finals.sort();
-  const pct=p=>finals[Math.floor(numPaths*p)];
-  const f2=v=>parseFloat(v.toFixed(2));
-  const fpct=v=>parseFloat(((v-S0)/S0*100).toFixed(2));
-  const meanP=Array.from(finals).reduce((a,b)=>a+b,0)/numPaths;
-  let up=0; for(let i=0;i<numPaths;i++) if(finals[i]>S0) up++;
+
+  const pct  = p => finals[Math.min(Math.floor(numPaths*p), numPaths-1)];
+  const f2   = v => parseFloat(v.toFixed(2));
+  const fpct = v => parseFloat(((v-S0)/S0*100).toFixed(2));
+
+  // Mean
+  let sum=0; for(let i=0;i<numPaths;i++) sum+=finals[i];
+  const meanP = sum/numPaths;
+
+  // Probability metrics
+  let up=0, down=0;
+  for(let i=0;i<numPaths;i++) {
+    if(finals[i]>S0) up++;
+    else down++;
+  }
+  const probUp   = parseFloat((up/numPaths*100).toFixed(1));
+  const probDown = parseFloat((down/numPaths*100).toFixed(1));
+
+  // Tail risk: % of paths losing >10%
+  const tenPctLoss = S0 * 0.9;
+  let tailCount=0;
+  for(let i=0;i<numPaths;i++) if(finals[i]<tenPctLoss) tailCount++;
+  const tailRisk = parseFloat((tailCount/numPaths*100).toFixed(1));
+
+  // Build histogram buckets (20 bins across P1–P99 range)
+  const lo   = pct(0.01);
+  const hi   = pct(0.99);
+  const bins = 20;
+  const step = (hi - lo) / bins;
+  const histBuckets = Array(bins).fill(0);
+  const histLabels  = [];
+  for (let i=0;i<bins;i++) histLabels.push(parseFloat((lo + i*step + step/2).toFixed(2)));
+  for (let i=0;i<numPaths;i++) {
+    const bin = Math.min(Math.floor((finals[i]-lo)/step), bins-1);
+    if (bin >= 0) histBuckets[bin]++;
+  }
+  const histPcts = histBuckets.map(c => parseFloat((c/numPaths*100).toFixed(2)));
+
+  // P5 / median / P95 band series for overlay
+  const p5Line  = Array(days+1).fill(pct(0.05));
+  const p95Line = Array(days+1).fill(pct(0.95));
+  const medLine = Array(days+1).fill(pct(0.50));
+
   return {
-    bear:f2(pct(.05)), bearPct:fpct(pct(.05)),
-    q25: f2(pct(.25)), q25Pct: fpct(pct(.25)),
-    base:f2(pct(.50)), basePct:fpct(pct(.50)),
+    // Percentiles
+    bear:f2(pct(.05)),  bearPct:fpct(pct(.05)),
+    q25: f2(pct(.25)),  q25Pct: fpct(pct(.25)),
+    base:f2(pct(.50)),  basePct:fpct(pct(.50)),
     expected:f2(meanP), expectedPct:fpct(meanP),
-    q75: f2(pct(.75)), q75Pct: fpct(pct(.75)),
-    bull:f2(pct(.95)), bullPct:fpct(pct(.95)),
-    probUp:parseFloat((up/numPaths*100).toFixed(1)),
-    mcVaR:parseFloat(((pct(.05)-S0)/S0*100).toFixed(2)),
-    expectedReturn:parseFloat(((meanP-S0)/S0*100).toFixed(2)),
-    annualVol:parseFloat((sigma*Math.sqrt(252)*100).toFixed(2)),
-    dailyStd:parseFloat((sigma*100).toFixed(3)),
-    drift:parseFloat((drift*100).toFixed(4)),
-    paths:numPaths, days, currentPrice:S0,
-    historyDays:valid.length, samplePaths, ticker:'',
+    q75: f2(pct(.75)),  q75Pct: fpct(pct(.75)),
+    bull:f2(pct(.95)),  bullPct:fpct(pct(.95)),
+
+    // Probabilities
+    probUp, probDown, tailRisk,
+
+    // Risk
+    mcVaR:          parseFloat(((pct(.05)-S0)/S0*100).toFixed(2)),
+    expectedReturn: parseFloat(((meanP-S0)/S0*100).toFixed(2)),
+    annualVol:      parseFloat((sigma*Math.sqrt(252)*100).toFixed(2)),
+    dailyStd:       parseFloat((sigma*100).toFixed(3)),
+    drift:          parseFloat((drift*100).toFixed(4)),
+
+    // Chart data
+    samplePaths, p5Line, p95Line, medLine,
+    histogram: { labels: histLabels, data: histPcts, step: parseFloat(step.toFixed(2)) },
+
+    // Meta
+    paths:numPaths, days, currentPrice:S0, historyDays:valid.length, ticker:'',
   };
 }
 
-// ==================== SIGNAL ENGINE ====================
+// ==================== DECISION ENGINE ====================
 function computeSignal(ind, price) {
-  let s=0;
-  if(ind.rsi!=null){if(ind.rsi<30)s+=2;else if(ind.rsi<45)s+=1;else if(ind.rsi>70)s-=2;else if(ind.rsi>55)s-=1;}
-  if(ind.macd!=null&&ind.macdSignal!=null) s+=ind.macd>ind.macdSignal?1:-1;
-  if(ind.sma50!=null)  s+=price>ind.sma50?1:-1;
-  if(ind.sma200!=null) s+=price>ind.sma200?1:-1;
-  if(ind.stoch!=null){if(ind.stoch<20)s+=1;else if(ind.stoch>80)s-=1;}
-  return s>=2?'BUY':s<=-2?'SELL':'HOLD';
+  const result = computeDecision(ind, price);
+  return result.signal;
+}
+
+function computeDecision(ind, price) {
+  let score=0, totalWeight=0;
+
+  // RSI (weight 2)
+  if (ind.rsi != null) {
+    totalWeight += 2;
+    if (ind.rsi < 25) score += 2;
+    else if (ind.rsi < 40) score += 1;
+    else if (ind.rsi > 75) score -= 2;
+    else if (ind.rsi > 60) score -= 1;
+  }
+
+  // MACD crossover (weight 2)
+  if (ind.macd != null && ind.macdSignal != null) {
+    totalWeight += 2;
+    const hist = ind.macd - ind.macdSignal;
+    if (hist > 0 && ind.macd > 0) score += 2;
+    else if (hist > 0) score += 1;
+    else if (hist < 0 && ind.macd < 0) score -= 2;
+    else score -= 1;
+  }
+
+  // Price vs SMA50 (weight 1.5)
+  if (ind.sma50 != null) {
+    totalWeight += 1.5;
+    const pctAbove = (price - ind.sma50) / ind.sma50 * 100;
+    if (pctAbove > 3) score += 1.5;
+    else if (pctAbove > 0) score += 0.75;
+    else if (pctAbove < -5) score -= 1.5;
+    else score -= 0.75;
+  }
+
+  // Price vs SMA200 (weight 2 — trend filter)
+  if (ind.sma200 != null) {
+    totalWeight += 2;
+    score += price > ind.sma200 ? 2 : -2;
+  }
+
+  // Stochastic (weight 1)
+  if (ind.stoch != null) {
+    totalWeight += 1;
+    if (ind.stoch < 20) score += 1;
+    else if (ind.stoch < 35) score += 0.5;
+    else if (ind.stoch > 80) score -= 1;
+    else if (ind.stoch > 65) score -= 0.5;
+  }
+
+  // ADX trend strength — amplifies signal
+  let adxMultiplier = 1;
+  if (ind.adx != null) {
+    if (ind.adx > 35) adxMultiplier = 1.25;
+    else if (ind.adx > 25) adxMultiplier = 1.1;
+    else if (ind.adx < 15) adxMultiplier = 0.8;
+  }
+  score *= adxMultiplier;
+
+  // Bollinger position
+  if (ind.bbUpper != null && ind.bbLower != null) {
+    totalWeight += 1;
+    const bbRange = ind.bbUpper - ind.bbLower;
+    const bbPos   = bbRange > 0 ? (price - ind.bbLower) / bbRange : 0.5;
+    if (bbPos < 0.2) score += 1;        // near lower band = oversold
+    else if (bbPos > 0.8) score -= 1;   // near upper band = overbought
+  }
+
+  // Normalize to -100..+100
+  const maxPossible = totalWeight * adxMultiplier;
+  const normalized  = maxPossible > 0 ? (score / maxPossible) * 100 : 0;
+
+  // Signal
+  const signal = normalized >= 20 ? 'BUY' : normalized <= -20 ? 'SELL' : 'HOLD';
+
+  // Confidence (0–100): how decisive the score is
+  const confidence = Math.round(Math.min(100, Math.abs(normalized) * 1.5 + 25));
+
+  // Risk/Reward ratio from Bollinger Bands
+  let rrRatio = null;
+  if (ind.bbUpper != null && ind.bbLower != null && price > 0) {
+    const potentialGain = Math.abs(ind.bbUpper - price) / price * 100;
+    const potentialLoss = Math.abs(price - ind.bbLower) / price * 100;
+    if (potentialLoss > 0) rrRatio = parseFloat((potentialGain / potentialLoss).toFixed(2));
+  }
+
+  // ATR-based stop loss distance %
+  let stopPct = null;
+  if (ind.atr != null && price > 0) {
+    stopPct = parseFloat((ind.atr * 2 / price * 100).toFixed(2));
+  }
+
+  return { signal, score: parseFloat(normalized.toFixed(1)), confidence, rrRatio, stopPct };
 }
 
 // ==================== MONTE CARLO UI ====================
@@ -1992,18 +2179,19 @@ function selectMCHorizon(btn, days) {
 async function runMonteCarlo() {
   if (!currentData) { showToast('⚠️ Analyze a stock first'); return; }
   const days  = _mcHorizonDays || 30;
-  const allC  = (currentData._rawCloses || currentData.priceHistory || []).filter(v => v!=null&&v>0);
+  const allC  = (currentData._rawCloses || currentData.priceHistory || []).filter(v => v!=null && v>0);
   const sym   = currentData.currencySymbol || '₹';
+
   const titleEl = document.getElementById('mc-chart-title');
   const subEl   = document.getElementById('mc-chart-sub');
   const runBtn  = document.getElementById('mc-run-btn');
 
   if (allC.length < 30) {
-    setEl('mc-results', errorCard('Need ≥30 candles for simulation. Got: ' + allC.length));
+    setEl('mc-results', errorCard('Need ≥30 trading days of history. Got: ' + allC.length));
     return;
   }
 
-  if (titleEl) titleEl.textContent = days + '-DAY MONTE CARLO';
+  if (titleEl) titleEl.textContent = days + '-DAY SIMULATION';
   if (subEl)   subEl.textContent   = 'Computing 5,000 paths...';
   if (runBtn)  { runBtn.disabled=true; runBtn.textContent='⏳'; }
   showToast('🎲 Running 5,000-path Monte Carlo...');
@@ -2018,45 +2206,92 @@ async function runMonteCarlo() {
   }
   mc.ticker = currentData.ticker;
   currentData.monteCarlo = mc;
-
   const S0 = mc.currentPrice;
 
-  // Chart
+  // ── Path chart ─────────────────────────────────────────────────────────────
   const ctx = document.getElementById('mc-chart');
   if (ctx) {
     if (mcChart) { mcChart.destroy(); mcChart=null; }
     const labels = Array.from({length:days+1}, (_,i) => i===0?'Now':'D'+i);
     const ds = [];
-    // Fan chart — first 30 faded paths, remaining 20 slightly visible
-    (mc.samplePaths||[]).forEach((path,pi) => {
-      const opacity = pi < 30 ? 0.08 : 0.15;
-      const color   = pi % 3 === 0 ? `rgba(0,212,255,${opacity})` : pi % 3 === 1 ? `rgba(0,229,160,${opacity})` : `rgba(168,85,247,${opacity})`;
-      ds.push({ data:path, borderColor:color, borderWidth:pi<30?0.8:1.2, fill:false, pointRadius:0, tension:0.2 });
+
+    // Fan paths — 100 total, gradient opacity
+    (mc.samplePaths||[]).forEach((path, pi) => {
+      const opacity = pi < 30 ? 0.06 : pi < 70 ? 0.10 : 0.15;
+      const colors  = ['rgba(0,212,255,', 'rgba(0,229,160,', 'rgba(168,85,247,'];
+      const col     = colors[pi % 3] + opacity + ')';
+      ds.push({ data:path, borderColor:col, borderWidth:0.8, fill:false, pointRadius:0, tension:0.2 });
     });
-    // Median highlight
-    if (mc.samplePaths?.length >= 5) {
-      const midPath = mc.samplePaths[Math.floor(mc.samplePaths.length/2)];
-      ds.push({ label:'Median', data:midPath, borderColor:'#00d4ff', borderWidth:2.5, fill:false, pointRadius:0, tension:0.2, z:10 });
-    }
-    ds.push({ label:'Bear', data:Array(days+1).fill(mc.bear), borderColor:'rgba(255,71,87,0.6)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
-    ds.push({ label:'Bull', data:Array(days+1).fill(mc.bull), borderColor:'rgba(0,229,160,0.6)', borderWidth:1.5, borderDash:[5,4], fill:false, pointRadius:0 });
-    ds.push({ label:'Entry', data:Array(days+1).fill(S0), borderColor:'rgba(255,217,61,0.45)', borderWidth:1, borderDash:[3,3], fill:false, pointRadius:0 });
+
+    // P5 band (dashed red)
+    ds.push({ label:'P5', data:mc.p5Line, borderColor:'rgba(255,71,87,0.7)',
+      borderWidth:1.5, borderDash:[6,4], fill:false, pointRadius:0 });
+
+    // P95 band (dashed green)
+    ds.push({ label:'P95', data:mc.p95Line, borderColor:'rgba(0,229,160,0.7)',
+      borderWidth:1.5, borderDash:[6,4], fill:false, pointRadius:0 });
+
+    // Median line (solid cyan)
+    ds.push({ label:'Median', data:mc.medLine, borderColor:'#00d4ff',
+      borderWidth:2.5, fill:false, pointRadius:0, tension:0 });
+
+    // Entry price (dashed yellow)
+    ds.push({ label:'Entry', data:Array(days+1).fill(S0), borderColor:'rgba(255,217,61,0.5)',
+      borderWidth:1, borderDash:[3,3], fill:false, pointRadius:0 });
+
     try {
       mcChart = new Chart(ctx, {
-        type:'line', data:{labels,datasets:ds},
+        type:'line', data:{labels, datasets:ds},
         options:{
-          responsive:true, maintainAspectRatio:true, animation:{duration:350},
-          plugins:{ legend:{display:false}, tooltip:{mode:'index',intersect:false, filter:i=>!!i.dataset.label, callbacks:{label:i=>i.dataset.label+': '+sym+parseFloat(i.raw).toFixed(2)}} },
+          responsive:true, maintainAspectRatio:true, animation:{duration:400},
+          plugins:{
+            legend:{ display:true, position:'bottom',
+              labels:{ color:'#4a6080', font:{size:9}, boxWidth:12,
+                filter: item => ['P5','P95','Median','Entry'].includes(item.text) }},
+            tooltip:{ mode:'index', intersect:false,
+              filter: i => ['P5','P95','Median','Entry'].includes(i.dataset.label||''),
+              callbacks:{ label: i => i.dataset.label+': '+sym+parseFloat(i.raw).toFixed(2) }}
+          },
           scales:{
-            x:{display:true,ticks:{color:'#4a6080',font:{size:9},maxTicksLimit:10},grid:{display:false}},
-            y:{grid:{color:'rgba(30,45,74,0.4)'},ticks:{color:'#4a6080',font:{size:9},callback:v=>sym+v.toLocaleString('en-IN',{maximumFractionDigits:0})}}
+            x:{ display:true, ticks:{color:'#4a6080',font:{size:9},maxTicksLimit:10}, grid:{display:false} },
+            y:{ grid:{color:'rgba(30,45,74,0.4)'},
+              ticks:{color:'#4a6080',font:{size:9}, callback:v=>sym+v.toLocaleString('en-IN',{maximumFractionDigits:0})}}
           }
         }
       });
     } catch(e) { console.error('[MC Chart]', e.message); }
   }
 
-  if (subEl) subEl.textContent = mc.paths.toLocaleString()+' paths · '+mc.historyDays+' days · GBM';
+  // ── Histogram chart ────────────────────────────────────────────────────────
+  const histCtx = document.getElementById('mc-histogram');
+  if (histCtx && mc.histogram) {
+    if (window._mcHistChart) { window._mcHistChart.destroy(); window._mcHistChart=null; }
+    const histColors = mc.histogram.labels.map(l =>
+      l < mc.bear ? 'rgba(255,71,87,0.75)' :
+      l > mc.bull ? 'rgba(0,229,160,0.75)' : 'rgba(0,212,255,0.55)'
+    );
+    try {
+      window._mcHistChart = new Chart(histCtx, {
+        type:'bar',
+        data:{
+          labels: mc.histogram.labels.map(l => sym+l.toFixed(0)),
+          datasets:[{ data:mc.histogram.data, backgroundColor:histColors,
+            borderColor:'transparent', borderWidth:0 }]
+        },
+        options:{
+          responsive:true, maintainAspectRatio:false, animation:{duration:300},
+          plugins:{ legend:{display:false},
+            tooltip:{ callbacks:{ label: i => i.raw.toFixed(2)+'% of paths' }} },
+          scales:{
+            x:{ ticks:{color:'#4a6080',font:{size:8},maxTicksLimit:8}, grid:{display:false} },
+            y:{ ticks:{color:'#4a6080',font:{size:9},callback:v=>v+'%'}, grid:{color:'rgba(30,45,74,0.3)'} }
+          }
+        }
+      });
+    } catch(e) { console.error('[MC Hist]', e.message); }
+  }
+
+  if (subEl) subEl.textContent = mc.paths.toLocaleString()+' paths · '+mc.historyDays+' days history · GBM';
   if (runBtn) { runBtn.disabled=false; runBtn.textContent='▶ RUN'; }
 
   const ps  = v => (v!=null?(v>=0?'+':'')+v+'%':'N/A');
@@ -2071,41 +2306,90 @@ async function runMonteCarlo() {
 
   setEl('mc-results', `
   <div style="margin-top:14px">
+
+    <!-- Scenario strip -->
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:12px">
-      ${scenCard('BEAR 5%', mc.bear, mc.bearPct,     'var(--red)',    'rgba(255,71,87,0.06)',  'rgba(255,71,87,0.2)')}
-      ${scenCard('Q25',     mc.q25,  mc.q25Pct,      'var(--orange)', 'rgba(255,107,53,0.06)', 'rgba(255,107,53,0.2)')}
-      ${scenCard('MEDIAN',  mc.base, mc.basePct,      'var(--accent)', 'rgba(0,212,255,0.06)',  'rgba(0,212,255,0.2)')}
-      ${scenCard('Q75',     mc.q75,  mc.q75Pct,      'var(--yellow)', 'rgba(255,217,61,0.06)', 'rgba(255,217,61,0.2)')}
-      ${scenCard('BULL 95%',mc.bull, mc.bullPct,      'var(--green)',  'rgba(0,229,160,0.06)',  'rgba(0,229,160,0.2)')}
+      ${scenCard('BEAR 5%',  mc.bear, mc.bearPct,  'var(--red)',    'rgba(255,71,87,0.06)',  'rgba(255,71,87,0.2)')}
+      ${scenCard('Q25',      mc.q25,  mc.q25Pct,   'var(--orange)', 'rgba(255,107,53,0.06)', 'rgba(255,107,53,0.2)')}
+      ${scenCard('MEDIAN',   mc.base, mc.basePct,  'var(--accent)', 'rgba(0,212,255,0.06)',  'rgba(0,212,255,0.2)')}
+      ${scenCard('Q75',      mc.q75,  mc.q75Pct,   'var(--yellow)', 'rgba(255,217,61,0.06)', 'rgba(255,217,61,0.2)')}
+      ${scenCard('BULL 95%', mc.bull, mc.bullPct,  'var(--green)',  'rgba(0,229,160,0.06)',  'rgba(0,229,160,0.2)')}
     </div>
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px">
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">EXPECTED PRICE</div>
-        <div style="font-size:16px;font-weight:800;color:${pco(mc.expectedReturn)}">${sym}${mc.expected??'N/A'}</div>
-        <div style="font-size:11px;color:${pco(mc.expectedReturn)}">${ps(mc.expectedReturn??0)}</div>
+
+    <!-- Probability + risk row -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">PROB UPSIDE</div>
+        <div style="font-size:18px;font-weight:800;color:${mc.probUp>50?'var(--green)':'var(--red)'}">
+          ${mc.probUp}%
+        </div>
+        <div style="font-size:9px;color:var(--text3)">${mc.probDown}% down</div>
       </div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">PROB. UPSIDE</div>
-        <div style="font-size:16px;font-weight:800;color:${mc.probUp>50?'var(--green)':'var(--red)'}">${mc.probUp}%</div>
-        <div style="font-size:11px;color:var(--text3)">${mc.paths.toLocaleString()} paths above ${sym}${S0}</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">EXPECTED</div>
+        <div style="font-size:16px;font-weight:800;color:${pco(mc.expectedReturn)}">${sym}${mc.expected}</div>
+        <div style="font-size:9px;color:${pco(mc.expectedReturn)}">${ps(mc.expectedReturn)}</div>
       </div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">MC VaR (5th pct)</div>
-        <div style="font-size:16px;font-weight:800;color:var(--red)">${mc.mcVaR??'N/A'}%</div>
-        <div style="font-size:11px;color:var(--text3)">worst-case ${days}D loss</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">MC VaR (5%)</div>
+        <div style="font-size:18px;font-weight:800;color:var(--red)">${mc.mcVaR}%</div>
+        <div style="font-size:9px;color:var(--text3)">worst-case ${days}D</div>
       </div>
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">ANNUAL VOL</div>
-        <div style="font-size:16px;font-weight:800;color:var(--yellow)">${mc.annualVol}%</div>
-        <div style="font-size:11px;color:var(--text3)">daily σ = ${mc.dailyStd}%</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px">TAIL RISK</div>
+        <div style="font-size:18px;font-weight:800;color:var(--red)">${mc.tailRisk}%</div>
+        <div style="font-size:9px;color:var(--text3)">paths losing >10%</div>
       </div>
     </div>
+
+    <!-- Histogram -->
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
+      <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:8px">
+        FINAL PRICE DISTRIBUTION · <span style="color:var(--red)">■ Bear</span> <span style="color:var(--accent)">■ Base</span> <span style="color:var(--green)">■ Bull</span>
+      </div>
+      <div style="height:100px">
+        <canvas id="mc-histogram"></canvas>
+      </div>
+    </div>
+
+    <!-- Vol + drift stats -->
     <div style="padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:9px;color:var(--text3)">
-      GBM · drift=${mc.drift}%/day · σ=${mc.dailyStd}%/day · ${mc.historyDays} days history · ${mc.paths.toLocaleString()} paths · Itô corrected
+      ANN. VOL: <b style="color:var(--yellow)">${mc.annualVol}%</b> &nbsp;·&nbsp;
+      DAILY σ: <b>${mc.dailyStd}%</b> &nbsp;·&nbsp;
+      DRIFT: <b>${mc.drift}%/day</b> &nbsp;·&nbsp;
+      HISTORY: <b>${mc.historyDays} days</b> &nbsp;·&nbsp;
+      PATHS: <b>${mc.paths.toLocaleString()}</b> &nbsp;·&nbsp;
+      GBM · Itô corrected
     </div>
   </div>`);
 
-  showToast('✅ MC complete · ' + days + 'D · ' + mc.paths.toLocaleString() + ' paths');
+  // Render histogram (needs DOM to exist first)
+  await new Promise(r => setTimeout(r, 50));
+  const histCtx2 = document.getElementById('mc-histogram');
+  if (histCtx2 && mc.histogram && !window._mcHistChart) {
+    const histColors2 = mc.histogram.labels.map(l =>
+      l < mc.bear ? 'rgba(255,71,87,0.75)' :
+      l > mc.bull ? 'rgba(0,229,160,0.75)' : 'rgba(0,212,255,0.55)'
+    );
+    try {
+      window._mcHistChart = new Chart(histCtx2, {
+        type:'bar',
+        data:{ labels:mc.histogram.labels.map(l=>sym+parseFloat(l).toFixed(0)),
+          datasets:[{data:mc.histogram.data, backgroundColor:histColors2, borderColor:'transparent', borderWidth:0}]},
+        options:{
+          responsive:true, maintainAspectRatio:false, animation:{duration:300},
+          plugins:{ legend:{display:false},
+            tooltip:{callbacks:{label:i=>i.raw.toFixed(2)+'% of paths'}}},
+          scales:{
+            x:{ticks:{color:'#4a6080',font:{size:8},maxTicksLimit:8},grid:{display:false}},
+            y:{ticks:{color:'#4a6080',font:{size:9},callback:v=>v+'%'},grid:{color:'rgba(30,45,74,0.3)'}}
+          }
+        }
+      });
+    } catch(e) { console.error('[MC Hist2]', e.message); }
+  }
+
+  showToast('✅ MC · ' + days + 'D · ' + mc.paths.toLocaleString() + ' paths');
 }
 
 // ==================== RENDER OVERVIEW ====================
@@ -2165,18 +2449,57 @@ function renderOverview() {
 
   renderPriceChart(d.priceHistory);
 
-  const rsi  = d.rsi14 ?? 50;
+  const rsi   = d.rsi14 ?? 50;
   const macdH = d.macdHistogram ?? 0;
+  const conf  = d.signalConfidence ?? 50;
+  const score = d.signalScore ?? 0;
+  const confCol = conf >= 70 ? 'var(--green)' : conf >= 45 ? 'var(--yellow)' : 'var(--red)';
+  const scoreBar= Math.round((score + 100) / 2); // -100..+100 → 0..100
+  const rrStr   = d.rrRatio != null ? d.rrRatio.toFixed(2) + ':1' : 'N/A';
+  const stopStr = d.stopPct != null ? d.stopPct.toFixed(2) + '%' : 'N/A';
+
   setEl('signal-section', `
     <div class="sentiment-bar-wrap" style="margin-bottom:16px">
-      <div class="flex-between">
-        <div class="section-title">OVERALL SIGNAL</div>
+      <div class="flex-between" style="margin-bottom:12px">
+        <div class="section-title">DECISION ENGINE</div>
         <div style="display:flex;gap:8px;align-items:center">
           <button onclick="exportAnalysis()" style="background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.25);border-radius:6px;color:var(--purple);font-family:'DM Mono',monospace;font-size:10px;padding:5px 10px;cursor:pointer">📤 PDF</button>
           <div class="signal-badge ${d.overallSignal}">${d.overallSignal==='BUY'?'▲':d.overallSignal==='SELL'?'▼':'◆'} ${d.overallSignal}</div>
         </div>
       </div>
-      <div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+
+      <!-- Score bar -->
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:9px;color:var(--text3)">BEARISH</span>
+          <span style="font-size:9px;color:var(--text3);font-weight:700">SCORE: ${score.toFixed(1)}</span>
+          <span style="font-size:9px;color:var(--text3)">BULLISH</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:3px;position:relative">
+          <div style="position:absolute;left:0;top:0;height:100%;width:50%;background:rgba(255,71,87,0.3);border-radius:3px 0 0 3px"></div>
+          <div style="position:absolute;left:50%;top:0;height:100%;width:50%;background:rgba(0,229,160,0.3);border-radius:0 3px 3px 0"></div>
+          <div style="position:absolute;top:-3px;width:10px;height:12px;background:${score>0?'var(--green)':score<0?'var(--red)':'var(--yellow)'};border-radius:2px;transform:translateX(-50%);left:${Math.max(3,Math.min(97,scoreBar))}%;box-shadow:0 0 6px currentColor"></div>
+        </div>
+      </div>
+
+      <!-- Confidence + R/R + Stop -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+        <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.15);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:3px">CONFIDENCE</div>
+          <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:${confCol}">${conf}%</div>
+        </div>
+        <div style="background:rgba(0,229,160,0.05);border:1px solid rgba(0,229,160,0.15);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:3px">RISK/REWARD</div>
+          <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:${d.rrRatio!=null&&d.rrRatio>1.5?'var(--green)':d.rrRatio!=null&&d.rrRatio>1?'var(--yellow)':'var(--red)'}">${rrStr}</div>
+        </div>
+        <div style="background:rgba(255,71,87,0.05);border:1px solid rgba(255,71,87,0.15);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:3px">STOP DIST.</div>
+          <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;color:var(--red)">${stopStr}</div>
+        </div>
+      </div>
+
+      <!-- RSI / MACD / Trend -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
         <div style="background:rgba(0,229,160,0.07);border:1px solid rgba(0,229,160,0.15);border-radius:8px;padding:10px">
           <div style="font-size:9px;color:var(--text3);letter-spacing:1px">RSI (14)</div>
           <div style="font-family:'Syne',sans-serif;font-size:13px;font-weight:700;margin-top:4px;color:${rsi<30?'var(--green)':rsi>70?'var(--red)':'var(--yellow)'}">${rsi<30?'OVERSOLD':rsi>70?'OVERBOUGHT':'NEUTRAL'}</div>
@@ -2276,6 +2599,41 @@ function renderRisk() {
       <div class="stat-card"><div class="stat-accent-bar" style="background:var(--yellow)"></div><div class="stat-label">OBV TREND</div><div class="stat-value" style="font-size:13px;text-transform:uppercase;color:${d.obvTrend==='bullish'?'var(--green)':'var(--red)'}">${d.obvTrend||'N/A'}</div><div class="stat-sub">on-balance vol</div></div>
     </div>`);
   setEl('ai-risk-section', '');
+
+  // Decision engine summary card in risk panel
+  if (d.signalScore != null) {
+    const existingRisk = document.getElementById('risk-section');
+    if (existingRisk) {
+      const decCard = document.createElement('div');
+      decCard.style.cssText = 'background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:14px';
+      const confCol = (d.signalConfidence||0)>=70?'var(--green)':(d.signalConfidence||0)>=45?'var(--yellow)':'var(--red)';
+      decCard.innerHTML = `
+        <div class="section-title mb-8">DECISION ENGINE SUMMARY</div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:6px">
+            <span style="font-size:10px;color:var(--text3)">SIGNAL SCORE</span>
+            <span style="font-size:12px;font-weight:700;color:${(d.signalScore||0)>0?'var(--green)':(d.signalScore||0)<0?'var(--red)':'var(--yellow)'}">
+              ${d.signalScore?.toFixed(1)??'N/A'} / 100
+            </span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:6px">
+            <span style="font-size:10px;color:var(--text3)">CONFIDENCE</span>
+            <span style="font-size:12px;font-weight:700;color:${confCol}">${d.signalConfidence??'N/A'}%</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:6px">
+            <span style="font-size:10px;color:var(--text3)">RISK/REWARD</span>
+            <span style="font-size:12px;font-weight:700;color:${d.rrRatio!=null&&d.rrRatio>1.5?'var(--green)':d.rrRatio!=null&&d.rrRatio>1?'var(--yellow)':'var(--red)'}">
+              ${d.rrRatio?.toFixed(2)??'N/A'}:1
+            </span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:6px">
+            <span style="font-size:10px;color:var(--text3)">ATR STOP</span>
+            <span style="font-size:12px;font-weight:700;color:var(--red)">${d.stopPct?.toFixed(2)??'N/A'}%</span>
+          </div>
+        </div>`;
+      existingRisk.appendChild(decCard);
+    }
+  }
 }
 
 // ==================== RENDER FUNDAMENTALS ====================
@@ -2520,8 +2878,10 @@ tr:last-child td{border-bottom:none}
     <div class="pbig">${sym}${d.price}</div>
     <div class="pchg">${isUp?'+':''}${chg}%</div>
     <div class="sbadge">${sig==='BUY'?'▲':sig==='SELL'?'▼':'◆'} ${sig}</div>
+    ${d.signalConfidence!=null?`<div style="font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.1);color:#e8f0fe">CONF ${d.signalConfidence}%</div>`:''}
+    ${d.rrRatio!=null?`<div style="font-size:10px;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.1);color:#e8f0fe">R/R ${d.rrRatio.toFixed(2)}:1</div>`:''}
   </div>
-  <div style="font-size:8px;color:#4a6080;margin-top:5px">Prev Close: ${sym}${d.previousClose||'—'} · As of ${d.priceDate||dateS}</div>
+  <div style="font-size:8px;color:#4a6080;margin-top:5px">Prev Close: ${sym}${d.previousClose||'—'} · Score: ${d.signalScore?.toFixed(1)??'N/A'}/100 · As of ${d.priceDate||dateS}</div>
 </div>
 
 <div class="sec">
